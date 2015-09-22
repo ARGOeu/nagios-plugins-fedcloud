@@ -1,0 +1,130 @@
+#! /usr/bin/perl -w
+#
+# Probe for freshness of fedcloud accounting data.
+# Copyright (c) 2012 Emir Imamagic
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#
+# Changes and Modifications
+# =========================
+# 22-Aug-2012 - Created;
+
+use strict;
+use Nagios::Plugin;
+use LWP::UserAgent;
+use Date::Parse;
+
+# Standard variables used in Nagios::Plugin constructor
+use constant PROGNAME => "check_fedcloud_accnt";
+use constant VERSION => '1.0';
+use constant DESCRIPTION => 'Probe for freshness of fedcloud accounting data.';
+use constant EXTRA_DESC => "";
+use constant LICENSE => 'This nagios plugin is free software, and comes with ABSOLUTELY NO WARRANTY.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+   http://www.apache.org/licenses/LICENSE-2.0
+Copyright 2012 Emir Imamagic';
+use constant SHORTNAME => 'FedCloud Accounting Freshness';
+use constant USAGE => "usage: check_fedcloud_accnt --site <file> \n";
+
+use constant ACCNT_URL => 'http://goc-accounting.grid-support.ac.uk/cloudtest/cloudsites2.html';
+
+# Create Nagios::Plugin instance
+my $plugin = Nagios::Plugin->new (usage => USAGE,
+                                  shortname => SHORTNAME,
+                                  version => VERSION,
+                                  blurb => DESCRIPTION,
+                                  extra => EXTRA_DESC,
+                                  license => LICENSE,
+                                  plugin  => PROGNAME);
+
+# Define additional arguments
+$plugin->add_arg(
+    spec => 'url|u=s',
+    help => "u|url\n   Address of web page with accounting data.\n   (default: ".ACCNT_URL.")",
+    required => 0,
+    default => ACCNT_URL
+);
+$plugin->add_arg(
+    spec => 'site|s=s',
+    help => "s|site\n   Nae of the site for which data is gatheres.\n   (default: )",
+    required => 1
+);
+$plugin->add_arg(
+    spec => 'warning|w=i',
+    help => "w|warning\n   Warning threshold for accounting freshness (days).\n   If 0 probe will only check if data has been published.\n   (default: 0)",
+    required => 0,
+    default => 0
+);
+$plugin->add_arg(
+    spec => 'critical|c=i',
+    help => "c|critical\n   Critical threshold for accounting freshness (days).\n   If 0 probe will only check if data has been published.\n   (default: 0)",
+    required => 0,
+    default => 0
+);
+
+$plugin->getopts;
+
+# Signal handler - TERM
+local $SIG{ALRM} = sub {
+    local $SIG{TERM} = 'IGNORE';
+    kill TERM => -$$;
+    $plugin->nagios_die("Timeout occured.");
+};
+
+local $SIG{TERM} = sub {
+    local $SIG{TERM} = 'IGNORE';
+    kill TERM => -$$;
+    $plugin->nagios_die("Plugin received TERM signal.");
+};
+
+# Input params validation
+
+my $warning = $plugin->opts->warning * 86400;
+my $critical = $plugin->opts->critical * 86400;
+my $site = $plugin->opts->site;
+
+alarm($plugin->opts->timeout);
+
+my $ua = LWP::UserAgent->new(env_proxy=>1);
+my $req = HTTP::Request->new(GET => $plugin->opts->url);
+my $res = $ua->request($req);
+if (!$res->is_success) {
+    $plugin->nagios_die("Could not get content of accounting web page '".$plugin->opts->url."': ".$res->status_line);
+}
+
+alarm(0);
+
+if ($res->content =~ /<tr><td>$site<\/td><td>(\d+?)<\/td><td>(.+?)<\/td><td>(\d.+?\d)<\/td><\/tr>/) {
+    my $updateTime = str2time($3, 'UTC');
+    my $diff = time() - $updateTime;
+    my $state;
+    my $answer;
+    if ($critical && $diff >= $critical) {
+        $state = CRITICAL;
+        $answer = "Accounting data is older than ".$plugin->opts->critical." days.";
+    } elsif ($warning && $diff >= $warning) {
+        $state = WARNING;
+        $answer = "Accounting data is older than ".$plugin->opts->warning." days.";
+    } else {
+        $state = OK;
+        $answer = "Accounting data for site $site found.";
+    }
+    $plugin->nagios_exit($state, "$answer Last update occured $3.");
+} else {
+    $plugin->nagios_exit(CRITICAL, "Accounting data for site $site has not been found.");
+}
+
+
