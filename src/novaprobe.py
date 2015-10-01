@@ -18,6 +18,7 @@
 
 import argparse, re, random, signal
 import requests, sys, os, json, socket
+from urlparse import urlparse
 import time
 
 from OpenSSL.SSL import TLSv1_METHOD
@@ -105,28 +106,12 @@ def nagios_out(status, msg, retcode):
 
 
 def get_info(server, userca, capath, timeout):
-    passed = True
-    try:
-        # initiate unauthorized response (HTTP 401) with keystone URL
-        headers, token = {}, None
-        headers.update({'Accept': '*/*'})
-        response = requests.get(server, headers=headers, cert=userca, verify=False, timeout=timeout)
-        if response.status_code == 400:
-            response = requests.get(server, headers={}, cert=userca, verify=False, timeout=timeout)
-    except requests.exceptions.ConnectionError as e:
-        nagios_out('Critical', 'Connection error %s - %s' % (server, errmsg_from_excp(e)), 2)
-
-    try:
-        # extract public keystone URL from response
-        keystone_server = re.search("Keystone.*=[\s'\"]*([\w:/\-_\.]*)[\s*\'\"]*", response.headers['www-authenticate']).group(1)
-    except(KeyError, IndexError, AttributeError, TypeError) as e:
-        nagios_out('Critical', 'Could not fetch keystone server from response: Key not found %s ' % errmsg_from_excp(e), 2)
-
-    if server_ok(keystone_server, capath, timeout):
+    if server_ok(server, capath, timeout):
+        o = urlparse(server)
         try:
             # fetch unscoped token
             token_suffix = ''
-            if keystone_server.endswith("v2.0"):
+            if o.netloc.endswith("v2.0"):
                 token_suffix = token_suffix+'/tokens'
             else:
                 token_suffix = token_suffix+'/v2.0/tokens'
@@ -136,26 +121,26 @@ def get_info(server, userca, capath, timeout):
 
             headers = {'content-type': 'application/json', 'accept': 'application/json'}
             payload = {'auth': {'voms': True}}
-            response = requests.post(keystone_server+token_suffix, headers=headers,
+            response = requests.post(o.scheme+'://'+o.netloc+token_suffix, headers=headers,
                                     data=json.dumps(payload), cert=userca, verify=False, timeout=timeout)
             response.raise_for_status()
             token = response.json()['access']['token']['id']
         except(KeyError, IndexError) as e:
             nagios_out('Critical', 'Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e), 2)
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            nagios_out('Critical', 'Connection error %s - %s' % (keystone_server+token_suffix, errmsg_from_excp(e)), 2)
+            nagios_out('Critical', 'Connection error %s - %s' % (o.netloc+token_suffix, errmsg_from_excp(e)), 2)
 
         try:
             # use unscoped token to get a list of allowed tenants mapped to
             # ops VO from VOMS proxy cert
             tenant_suffix= ''
-            if keystone_server.endswith("v2.0"):
+            if o.netloc.endswith("v2.0"):
                 tenant_suffix = tenant_suffix+'/tenants'
             else:
                 tenant_suffix = tenant_suffix+'/v2.0/tenants'
             headers = {'content-type': 'application/json', 'accept': 'application/json'}
             headers.update({'x-auth-token': token})
-            response = requests.get(keystone_server+tenant_suffix, headers=headers,
+            response = requests.get(o.scheme+'://'+o.netloc+tenant_suffix, headers=headers,
                                     data=None, cert=userca, verify=False, timeout=timeout)
             response.raise_for_status()
             tenants = response.json()['tenants']
@@ -166,20 +151,20 @@ def get_info(server, userca, capath, timeout):
         except(KeyError, IndexError) as e:
             nagios_out('Critical', 'Could not fetch allowed tenants from response: Key not found %s' % errmsg_from_excp(e), 2)
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            nagios_out('Critical', 'Connection error %s - %s' % (keystone_server+tenant_suffix, errmsg_from_excp(e)), 2)
+            nagios_out('Critical', 'Connection error %s - %s' % (o.scheme+'://'+o.netloc+tenant_suffix, errmsg_from_excp(e)), 2)
 
         try:
             # get scoped token for allowed tenant
             headers = {'content-type': 'application/json', 'accept': 'application/json'}
             payload = {'auth': {'voms': True, 'tenantName': tenant}}
-            response = requests.post(keystone_server+token_suffix, headers=headers,
+            response = requests.post(o.scheme+'://'+o.netloc+token_suffix, headers=headers,
                                     data=json.dumps(payload), cert=userca, verify=False, timeout=timeout)
             response.raise_for_status()
             token = response.json()['access']['token']['id']
         except(KeyError, IndexError) as e:
             nagios_out('Critical', 'Could not fetch scoped keystone token for %s from response: Key not found %s' % (tenant, errmsg_from_excp(e)), 2)
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            nagios_out('Critical', 'Connection error %s - %s' % (keystone_server+token_suffix, errmsg_from_excp(e)), 2)
+            nagios_out('Critical', 'Connection error %s - %s' % (o.scheme+'://'+o.netloc+token_suffix, errmsg_from_excp(e)), 2)
 
         try:
             tenant_id = response.json()['access']['token']['tenant']['id']
@@ -200,7 +185,7 @@ def get_info(server, userca, capath, timeout):
         except(KeyError, IndexError, AssertionError) as e:
             nagios_out('Critical', 'Could not fetch nova compute service URL: Key not found %s' % (errmsg_from_excp(e)))
 
-        return token, keystone_server+token_suffix, tenant_id, nova_url
+        return token, tenant_id, nova_url
 
 
 def main():
@@ -212,6 +197,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--endpoint', dest='endpoint', nargs='?')
     parser.add_argument('-v', dest='verb', action='store_true')
+    parser.add_argument('--flavor', dest='flavor', nargs='?')
+    parser.add_argument('--image', dest='image', nargs='?')
     parser.add_argument('--cert', dest='cert', nargs='?')
     parser.add_argument('-t', dest='timeout', type=int, nargs='?', default=120)
     parser.add_argument('--capath', dest='capath', nargs='?', default='/etc/grid-security/certificates')
@@ -235,28 +222,32 @@ def main():
             nagios_out('Unknown', 'command-line arguments are not correct', 3)
 
     if server_ok(argholder.endpoint, argholder.capath, argholder.timeout):
-        ks_token, keystone, tenant_id, nova_url = get_info(argholder.endpoint,
-                                                           argholder.cert,
-                                                           argholder.capath,
-                                                           argholder.timeout)
-
+        ks_token, tenant_id, nova_url = get_info(argholder.endpoint,
+                                                 argholder.cert,
+                                                 argholder.capath,
+                                                 argholder.timeout)
 
         # remove once endpoints properly expose images openstackish way
-        try:
-            image = re.search("(\?image=)([\w\-]*)", argholder.endpoint).group(2)
-        except (AttributeError, IndexError):
-            nagios_out('Unknown', 'image UUID is not specifed for endpoint', 3)
+        if not argholder.image:
+            try:
+                image = re.search("(\?image=)([\w\-]*)", argholder.endpoint).group(2)
+            except (AttributeError, IndexError):
+                nagios_out('Unknown', 'image UUID is not specifed for endpoint', 3)
+        else:
+            image = argholder.image
 
-        try:
-            flavor = re.search("(\&resource=)([\w\-]*)", argholder.endpoint).group(2)
-        except (AttributeError, IndexError):
-            nagios_out('Unknown', 'flavor is not specified for image %s' % (image), 3)
+        if not argholder.flavor:
+            try:
+                flavor = re.search("(\&flavor=)([\w\.\-]*)", argholder.endpoint).group(2)
+            except (AttributeError, IndexError):
+                nagios_out('Unknown', 'flavor is not specified for image %s' % (image), 3)
+        else:
+            flavor = argholder.flavor
 
         if argholder.verb:
             print 'Endpoint:%s' % (argholder.endpoint)
             print 'Image:%s' % (image)
             print 'Flavor:%s' % (flavor)
-            print 'Keystone: %s' % keystone
             print 'Auth token (cut to 64 chars): %.64s' % ks_token
             print 'Tenant OPS, ID:%s' % tenant_id
             print 'Nova: %s' % nova_url
@@ -272,7 +263,7 @@ def main():
             flavors = response.json()['flavors']
             flavor_id = None
             for f in flavors:
-                if f['name'] == flavor.replace('-', '.'):
+                if f['name'] == flavor:
                     flavor_id = f['id']
             assert flavor_id is not None
             if argholder.verb:
@@ -290,8 +281,8 @@ def main():
             headers = {'content-type': 'application/json', 'accept': 'application/json'}
             headers.update({'x-auth-token': ks_token})
             payload = {'server': {'name': SERVER_NAME,
-                            'imageRef': nova_url + '/images/%s' % (image),
-                            'flavorRef': nova_url + '/flavors/%s'% (flavor_id)}}
+                                  'imageRef': nova_url + '/images/%s' % (image),
+                                  'flavorRef': nova_url + '/flavors/%s'% (flavor_id)}}
             response = requests.post(nova_url + '/servers', headers=headers,
                                      data=json.dumps(payload),
                                      cert=argholder.cert, verify=False,
@@ -336,7 +327,7 @@ def main():
                     AssertionError, IndexError, AttributeError) as e:
                 if i < tss and argholder.verb:
                     sys.stdout.write('\n')
-                    sys.stdout.write('Try to fetch server:%s status one more time. Error was %s' % (server_id,
+                    sys.stdout.write('Try to fetch server:%s status one more time. Error was %s\n' % (server_id,
                                                                                                     errmsg_from_excp(e)))
                     sys.stdout.write('Check server status every %ds: ' % (sleepsec))
                 else:
