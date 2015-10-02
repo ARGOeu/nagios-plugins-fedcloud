@@ -108,6 +108,8 @@ def nagios_out(status, msg, retcode):
 def get_info(server, userca, capath, timeout):
     if server_ok(server, capath, timeout):
         o = urlparse(server)
+        if o.scheme != 'https':
+            nagios_out('Critical', 'Connection error %s - Probe expects HTTPS endpoint' % (o.scheme+'://'+o.netloc), 2)
         try:
             # fetch unscoped token
             token_suffix = ''
