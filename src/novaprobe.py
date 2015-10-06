@@ -272,7 +272,6 @@ def main():
                 print "Flavor %s, ID:%s" % (flavor, flavor_id)
         except (requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
-            print 'yes'
             nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % errmsg_from_excp(e), 2)
         except (AssertionError, IndexError, AttributeError) as e:
             nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % str(e), 2)
