@@ -3,7 +3,7 @@
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
 Version: 0.1.0
-Release: 4%{?dist}
+Release: 5%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
 Source0: %{name}-%{version}.tar.gz
@@ -33,6 +33,8 @@ rm -rf $RPM_BUILD_ROOT
 %{dir}
 
 %changelog
+* Tue Jan 19 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-5%{?dist}
+- remove Py2.6 deprecations in cdmiprobe and novaprobe
 * Fri Oct 6 2015 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-4%{?dist}
 - novaprobe: debugging helper leftover removed 
 * Fri Oct 2 2015 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-3%{?dist}
