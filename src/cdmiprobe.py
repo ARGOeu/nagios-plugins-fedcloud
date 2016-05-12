@@ -36,7 +36,9 @@ DEFAULT_PORT = 443
 def errmsg_from_excp(e):
     if getattr(e, 'args', False):
         retstr = ''
-        if isinstance(e.args, list) or isinstance(e.args, tuple) \
+        if isinstance(e.args, basestring):
+            return e.args
+        elif isinstance(e.args, list) or isinstance(e.args, tuple) \
                 or isinstance(e.args, dict):
             for s in e.args:
                 if isinstance(s, str):
@@ -44,8 +46,6 @@ def errmsg_from_excp(e):
                 if isinstance(s, tuple) or isinstance(s, tuple):
                     retstr += ' '.join(s)
             return retstr
-        elif isinstance(e.args, str):
-            return e.args
         else:
             for s in e.args:
                 retstr += str(s) + ' '
