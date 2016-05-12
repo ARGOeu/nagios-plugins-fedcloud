@@ -171,6 +171,10 @@ def get_token(server, userca, capath, timeout):
                 for t in tenants:
                     if 'ops' in t['name']:
                         tenant = t['name']
+                        break
+                else:
+                    # if there is no "ops" tenant, use the first one
+                    tenant = tenants[0]['name']
             except(KeyError, IndexError):
                 passed = False
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
