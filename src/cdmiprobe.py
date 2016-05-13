@@ -36,7 +36,9 @@ DEFAULT_PORT = 443
 def errmsg_from_excp(e):
     if getattr(e, 'args', False):
         retstr = ''
-        if isinstance(e.args, list) or isinstance(e.args, tuple) \
+        if isinstance(e.args, basestring):
+            return e.args
+        elif isinstance(e.args, list) or isinstance(e.args, tuple) \
                 or isinstance(e.args, dict):
             for s in e.args:
                 if isinstance(s, str):
@@ -44,8 +46,6 @@ def errmsg_from_excp(e):
                 if isinstance(s, tuple) or isinstance(s, tuple):
                     retstr += ' '.join(s)
             return retstr
-        elif isinstance(e.args, str):
-            return e.args
         else:
             for s in e.args:
                 retstr += str(s) + ' '
@@ -103,99 +103,167 @@ def nagios_out(status, msg, retcode):
     sys.stdout.write(status+": "+msg+"\n")
     sys.exit(retcode)
 
-def get_token(server, userca, capath, timeout):
-    for v, cdmiver in enumerate(HEADER_CDMI_VERSIONS):
-        passed = True
+def get_token(server, userca, capath, timeout, cdmiver):
+    try:
+        # initiate unauthorized response (HTTP 401) with keystone URL
+        headers, token = {}, None
+        headers.update(cdmiver)
+        headers.update({'Accept': '*/*'})
+        response = requests.get(server, headers=headers, cert=userca, verify=False, timeout=timeout)
+        if response.status_code == 400:
+            response = requests.get(server, headers={}, cert=userca, verify=False)
+    except requests.exceptions.ConnectionError as e:
+        nagios_out('Critical', 'Connection error %s - %s' % (server, errmsg_from_excp(e)), 2)
+
+    try:
+        # extract public keystone URL from response
+        keystone_server = re.search("Keystone.*=[\s'\"]*([\w:/\-_\.]*)[\s*\'\"]*", response.headers['www-authenticate']).group(1)
+        if ':5000' not in keystone_server:
+            raise AttributeError
+    except(KeyError, IndexError, AttributeError):
+        raise Exception('Could not fetch keystone server from response: Key not found %s' % errmsg_from_excp(e))
+
+    if server_ok(keystone_server, capath, timeout):
         try:
-            # initiate unauthorized response (HTTP 401) with keystone URL
-            headers, token = {}, None
+            # fetch unscoped token
+            token_suffix = ''
+            if keystone_server.endswith("v2.0"):
+                token_suffix = token_suffix+'/tokens'
+            else:
+                token_suffix = token_suffix+'/v2.0/tokens'
+
+            headers, payload, token = {}, {}, None
             headers.update(cdmiver)
             headers.update({'Accept': '*/*'})
-            response = requests.get(server, headers=headers, cert=userca, verify=False, timeout=timeout)
-            if response.status_code == 400:
-                response = requests.get(server, headers={}, cert=userca, verify=False)
-        except requests.exceptions.ConnectionError as e:
-            nagios_out('Critical', 'Connection error %s - %s' % (server, errmsg_from_excp(e)), 2)
+
+            headers = {'content-type': 'application/json', 'accept': 'application/json'}
+            payload = {'auth': {'voms': True}}
+            response = requests.post(keystone_server+token_suffix, headers=headers,
+                                    data=json.dumps(payload), cert=userca, verify=False, timeout=timeout)
+            response.raise_for_status()
+            token = response.json()['access']['token']['id']
+        except(KeyError, IndexError) as e:
+            raise Exception('Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e))
+        except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
+            nagios_out('Critical', 'Connection error %s - %s' % (keystone_server+token_suffix, errmsg_from_excp(e)), 2)
 
         try:
-            # extract public keystone URL from response
-            keystone_server = re.search("Keystone.*=[\s'\"]*([\w:/\-_\.]*)[\s*\'\"]*", response.headers['www-authenticate']).group(1)
-            if ':5000' not in keystone_server:
-                raise AttributeError
-        except(KeyError, IndexError, AttributeError):
-            passed = False
-            if v == len(HEADER_CDMI_VERSIONS) - 1:
-                nagios_out('Critical', 'Could not fetch keystone server from response: Key not found %s' % errmsg_from_excp(e), 2)
+            # use unscoped token to get a list of allowed tenants mapped to
+            # ops VO from VOMS proxy cert
+            tenant_suffix= ''
+            if keystone_server.endswith("v2.0"):
+                tenant_suffix = tenant_suffix+'/tenants'
+            else:
+                tenant_suffix = tenant_suffix+'/v2.0/tenants'
+            headers = {'content-type': 'application/json', 'accept': 'application/json'}
+            headers.update({'x-auth-token': token})
+            response = requests.get(keystone_server+tenant_suffix, headers=headers,
+                                    data=None, cert=userca, verify=False, timeout=timeout)
+            response.raise_for_status()
+            tenants = response.json()['tenants']
+            tenant = ''
+            for t in tenants:
+                if 'ops' in t['name']:
+                    tenant = t['name']
+                    break
+            else:
+                # if there is no "ops" tenant, use the first one
+                tenant = tenants[0]['name']
+        except(KeyError, IndexError) as e:
+            raise Exception('could not fetch allowed tenants from response: Key not found %s' % errmsg_from_excp(e))
+        except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
+            nagios_out('Critical', 'connection error %s - %s' % (keystone_server+tenant_suffix, errmsg_from_excp(e)), 2)
 
-        if server_ok(keystone_server, capath, timeout):
-            try:
-                # fetch unscoped token
-                token_suffix = ''
-                if keystone_server.endswith("v2.0"):
-                    token_suffix = token_suffix+'/tokens'
-                else:
-                    token_suffix = token_suffix+'/v2.0/tokens'
+        try:
+            # get scoped token for allowed tenant
+            headers = {'content-type': 'application/json', 'accept': 'application/json'}
+            payload = {'auth': {'voms': True, 'tenantName': tenant}}
+            response = requests.post(keystone_server+token_suffix, headers=headers,
+                                    data=json.dumps(payload), cert=userca, verify=False, timeout=timeout)
+            response.raise_for_status()
+            token = response.json()['access']['token']['id']
+        except(KeyError, IndexError) as e:
+            raise Exception('Critical', 'could not fetch scoped keystone token for %s from response: Key not found %s' % (tenant, errmsg_from_excp(e)))
+        except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
+            nagios_out('Critical', 'connection error %s - %s' % (keystone_server+token_suffix, errmsg_from_excp(e)), 2)
 
-                headers, payload, token = {}, {}, None
-                headers.update(cdmiver)
-                headers.update({'Accept': '*/*'})
+        return token
 
-                headers = {'content-type': 'application/json', 'accept': 'application/json'}
-                payload = {'auth': {'voms': True}}
-                response = requests.post(keystone_server+token_suffix, headers=headers,
-                                        data=json.dumps(payload), cert=userca, verify=False, timeout=timeout)
-                response.raise_for_status()
-                token = response.json()['access']['token']['id']
-            except(KeyError, IndexError):
-                passed = False
-                if v == len(HEADER_CDMI_VERSIONS) - 1:
-                    nagios_out('Critical', 'Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e), 2)
-            except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-                nagios_out('Critical', 'Connection error %s - %s' % (keystone_server+token_suffix, errmsg_from_excp(e)), 2)
 
-            try:
-                # use unscoped token to get a list of allowed tenants mapped to
-                # ops VO from VOMS proxy cert
-                tenant_suffix= ''
-                if keystone_server.endswith("v2.0"):
-                    tenant_suffix = tenant_suffix+'/tenants'
-                else:
-                    tenant_suffix = tenant_suffix+'/v2.0/tenants'
-                headers = {'content-type': 'application/json', 'accept': 'application/json'}
-                headers.update({'x-auth-token': token})
-                response = requests.get(keystone_server+tenant_suffix, headers=headers,
-                                        data=None, cert=userca, verify=False, timeout=timeout)
-                response.raise_for_status()
-                tenants = response.json()['tenants']
-                tenant = ''
-                for t in tenants:
-                    if 'ops' in t['name']:
-                        tenant = t['name']
-            except(KeyError, IndexError):
-                passed = False
-                if v == len(HEADER_CDMI_VERSIONS) - 1:
-                    nagios_out('Critical', 'could not fetch allowed tenants from response: Key not found %s' % errmsg_from_excp(e), 2)
-            except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-                nagios_out('Critical', 'connection error %s - %s' % (keystone_server+tenant_suffix, errmsg_from_excp(e)), 2)
+def create_container(argholder, ks_token, cdmiver, container_name):
+    # create container
+    headers, payload= {}, {}
+    headers.update(cdmiver)
+    headers.update({'accept': CDMI_CONTAINER,
+                    'content-type': CDMI_CONTAINER})
+    headers.update({'x-auth-token': ks_token})
+    response = requests.put(argholder.endpoint + container_name + '/',
+                            headers=headers, cert=argholder.cert, verify=False)
+    response.raise_for_status()
 
-            try:
-                # get scoped token for allowed tenant
-                headers = {'content-type': 'application/json', 'accept': 'application/json'}
-                payload = {'auth': {'voms': True, 'tenantName': tenant}}
-                response = requests.post(keystone_server+token_suffix, headers=headers,
-                                        data=json.dumps(payload), cert=userca, verify=False, timeout=timeout)
-                response.raise_for_status()
-                token = response.json()['access']['token']['id']
 
-            except(KeyError, IndexError):
-                passed = False
-                if v == len(HEADER_CDMI_VERSIONS) - 1:
-                    nagios_out('Critical', 'could not fetch scoped keystone token for %s from response: Key not found %s' % (tenant, errmsg_from_excp(e)), 2)
-            except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-                nagios_out('Critical', 'connection error %s - %s' % (keystone_server+token_suffix, errmsg_from_excp(e)), 2)
+def delete_container(argholder, ks_token, cdmiver, container_name):
+    # remove container
+    headers, payload= {}, {}
+    headers.update(cdmiver)
+    headers.update({'x-auth-token': ks_token})
+    response = requests.delete(argholder.endpoint + container_name + '/',
+                            headers=headers, cert=argholder.cert, verify=False)
+    response.raise_for_status()
 
-        if passed:
-            return token
+
+def create_dataobject(argholder, ks_token, cdmiver, container_name, obj_name,
+                      obj_data):
+    # create data object
+    headers, payload= {}, {}
+    headers.update(cdmiver)
+    headers.update({'accept': CDMI_OBJECT,
+                    'content-type': CDMI_OBJECT})
+    headers.update({'x-auth-token': ks_token})
+    payload = {'mimetype': 'text/plain'}
+    payload['value'] = unicode(obj_data)
+    payload['valuetransferencoding'] = 'utf-8'
+    response = requests.put(argholder.endpoint + container_name + obj_name,
+                            data=json.dumps(payload), headers=headers,
+                            cert=argholder.cert, verify=False)
+    response.raise_for_status()
+
+
+def get_dataobject(argholder, ks_token, cdmiver, container_name, obj_name):
+    # get data object
+    headers, payload= {}, {}
+    headers.update(cdmiver)
+    headers.update({'accept': CDMI_OBJECT,
+                    'content-type': CDMI_OBJECT})
+    headers.update({'x-auth-token': ks_token})
+    response = requests.get(argholder.endpoint + container_name + obj_name,
+                            headers=headers, cert=argholder.cert, verify=False)
+    response.raise_for_status()
+    return response.json()['value']
+
+
+def delete_dataobject(argholder, ks_token, cdmiver, container_name, obj_name):
+    # remove data object
+    headers, payload= {}, {}
+    headers.update(cdmiver)
+    headers.update({'x-auth-token': ks_token})
+    response = requests.delete(argholder.endpoint + container_name + obj_name,
+                               headers=headers, cert=argholder.cert, verify=False)
+    response.raise_for_status()
+
+
+def clean_up(argholder, ks_token, cdmiver, container_name, obj_name=None):
+    if obj_name:
+        try:
+            delete_dataobject(argholder, ks_token, cdmiver,
+                              container_name, obj_name)
+        except requests.exceptions.HTTPError as e:
+            sys.stderr.write('Clean up error: %s\n' % errmsg_from_excp(e))
+    try:
+        delete_container(argholder, ks_token, cdmiver, container_name)
+    except requests.exceptions.HTTPError as e:
+        sys.stderr.write('Clean up error: %s\n' % errmsg_from_excp(e))
+
 
 def main():
     class ArgHolder(object):
@@ -229,140 +297,90 @@ def main():
 
     if server_ok(argholder.endpoint, argholder.capath, argholder.timeout):
         for v, cdmiver in enumerate(HEADER_CDMI_VERSIONS):
-            passed = True
-
             # fetch scoped token for ops VO
-            ks_token = get_token(argholder.endpoint,
-                                 argholder.cert,
-                                 argholder.capath,
-                                 argholder.timeout)
+            try:
+                ks_token = get_token(argholder.endpoint,
+                                     argholder.cert,
+                                     argholder.capath,
+                                     argholder.timeout,
+                                     cdmiver)
+            except Exception as e:
+                if v == len(HEADER_CDMI_VERSIONS) - 1:
+                    nagios_out('Critical', e.message, 2)
+                continue
+
 
             randstr = '-'+''.join(random.sample('abcdefghijklmno', 3))
+            container_name = CONTAINER + randstr
             randdata = ''.join(random.sample('abcdefghij1234567890', 20))
+            obj_name = DOBJECT + randstr
 
             try:
-                # create container
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'accept': CDMI_CONTAINER,
-                                'content-type': CDMI_CONTAINER})
-                headers.update({'x-auth-token': ks_token})
-                response = requests.put(argholder.endpoint+CONTAINER+randstr+'/',
-                                        headers=headers, cert=argholder.cert, verify=False)
-                response.raise_for_status()
-
+                create_container(argholder, ks_token, cdmiver, container_name)
             except requests.exceptions.HTTPError as e:
-                passed = False
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - create_container failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             try:
-                # create data object
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'accept': CDMI_OBJECT,
-                                'content-type': CDMI_OBJECT})
-                headers.update({'x-auth-token': ks_token})
-                payload = {'mimetype': 'text/plain'}
-                payload['value'] = unicode(randdata)
-                payload['valuetransferencoding'] = 'utf-8'
-                response = requests.put(argholder.endpoint+CONTAINER+randstr+DOBJECT+randstr,
-                                        data=json.dumps(payload), headers=headers,
-                                        cert=argholder.cert, verify=False)
-                response.raise_for_status()
-
+                create_dataobject(argholder, ks_token, cdmiver, container_name,
+                                  obj_name, randdata)
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - create_dataobject failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             try:
-                # get data object
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'accept': CDMI_OBJECT,
-                                'content-type': CDMI_OBJECT})
-                headers.update({'x-auth-token': ks_token})
-                response = requests.get(argholder.endpoint+CONTAINER+randstr+DOBJECT+randstr,
-                                        headers=headers, cert=argholder.cert, verify=False)
-                response.raise_for_status()
-                if response.json()['value'] != randdata:
+                data = get_dataobject(argholder, ks_token, cdmiver,
+                                      container_name, obj_name)
+                if data != randdata:
                     raise requests.exceptions.HTTPError('data integrity violated')
-
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - get_dataobject failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             newranddata = ''.join(random.sample('abcdefghij1234567890', 20))
 
             try:
-                # update data object
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'accept': CDMI_OBJECT,
-                                'content-type': CDMI_OBJECT})
-                headers.update({'x-auth-token': ks_token})
-                payload = {'mimetype': 'text/plain'}
-                payload['value'] = unicode(newranddata)
-                payload['valuetransferencoding'] = 'utf-8'
-                response = requests.put(argholder.endpoint+CONTAINER+randstr+DOBJECT+randstr,
-                                        data=json.dumps(payload), headers=headers,
-                                        cert=argholder.cert, verify=False)
-                response.raise_for_status()
-
+                create_dataobject(argholder, ks_token, cdmiver, container_name,
+                                  obj_name, newranddata)
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - update_dataobject failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             try:
-                # get data object
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'accept': CDMI_OBJECT,
-                                'content-type': CDMI_OBJECT})
-                headers.update({'x-auth-token': ks_token})
-                response = requests.get(argholder.endpoint+CONTAINER+randstr+DOBJECT+randstr,
-                                        headers=headers, cert=argholder.cert, verify=False)
-                response.raise_for_status()
-                if response.json()['value'] != newranddata:
+                data = get_dataobject(argholder, ks_token, cdmiver,
+                                      container_name, obj_name)
+                if data != newranddata:
                     raise requests.exceptions.HTTPError('data integrity violated')
-
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - get_dataobject failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             try:
-                # remove data object
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'x-auth-token': ks_token})
-                response = requests.delete(argholder.endpoint+CONTAINER+randstr+DOBJECT+randstr,
-                                        headers=headers, cert=argholder.cert, verify=False)
-                response.raise_for_status()
-
+                delete_dataobject(argholder, ks_token, cdmiver, container_name,
+                                  obj_name)
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - delete_dataobject failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             try:
-                # remove container
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'x-auth-token': ks_token})
-                response = requests.delete(argholder.endpoint+CONTAINER+randstr+'/',
-                                        headers=headers, cert=argholder.cert, verify=False)
-                response.raise_for_status()
-
+                delete_container(argholder, ks_token, cdmiver, container_name)
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - delete_container failed %s' % errmsg_from_excp(e), 2)
+                continue
 
-            if passed:
-                nagios_out('OK', 'container and dataobject creating, fetching and removing tests were successful', 0)
+            nagios_out('OK', 'container and dataobject creating, fetching and removing tests were successful', 0)
 
 main()
