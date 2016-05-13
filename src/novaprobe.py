@@ -31,20 +31,20 @@ TIMEOUT_CREATE_DELETE = 600
 SERVER_NAME = 'cloudmonprobe-servertest'
 
 def errmsg_from_excp(e):
-    if getattr(e, 'message', False):
+    if getattr(e, 'args', False):
         retstr = ''
-        if isinstance(e.message, list) or isinstance(e.message, tuple) \
-                or isinstance(e.message, dict):
-            for s in e.message:
+        if isinstance(e.args, list) or isinstance(e.args, tuple) \
+                or isinstance(e.args, dict):
+            for s in e.args:
                 if isinstance(s, str):
                     retstr += s + ' '
                 if isinstance(s, tuple) or isinstance(s, tuple):
                     retstr += ' '.join(s)
             return retstr
-        elif isinstance(e.message, str):
-            return e.message
+        elif isinstance(e.args, str):
+            return e.args
         else:
-            for s in e.message:
+            for s in e.args:
                 retstr += str(s) + ' '
             return retstr
     else:
@@ -108,6 +108,8 @@ def nagios_out(status, msg, retcode):
 def get_info(server, userca, capath, timeout):
     if server_ok(server, capath, timeout):
         o = urlparse(server)
+        if o.scheme != 'https':
+            nagios_out('Critical', 'Connection error %s - Probe expects HTTPS endpoint' % (o.scheme+'://'+o.netloc), 2)
         try:
             # fetch unscoped token
             token_suffix = ''
@@ -270,7 +272,6 @@ def main():
                 print "Flavor %s, ID:%s" % (flavor, flavor_id)
         except (requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
-            print 'yes'
             nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % errmsg_from_excp(e), 2)
         except (AssertionError, IndexError, AttributeError) as e:
             nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % str(e), 2)
