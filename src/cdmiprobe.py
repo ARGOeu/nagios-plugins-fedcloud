@@ -190,6 +190,81 @@ def get_token(server, userca, capath, timeout, cdmiver):
         return token
 
 
+def create_container(argholder, ks_token, cdmiver, container_name):
+    # create container
+    headers, payload= {}, {}
+    headers.update(cdmiver)
+    headers.update({'accept': CDMI_CONTAINER,
+                    'content-type': CDMI_CONTAINER})
+    headers.update({'x-auth-token': ks_token})
+    response = requests.put(argholder.endpoint + container_name + '/',
+                            headers=headers, cert=argholder.cert, verify=False)
+    response.raise_for_status()
+
+
+def delete_container(argholder, ks_token, cdmiver, container_name):
+    # remove container
+    headers, payload= {}, {}
+    headers.update(cdmiver)
+    headers.update({'x-auth-token': ks_token})
+    response = requests.delete(argholder.endpoint + container_name + '/',
+                            headers=headers, cert=argholder.cert, verify=False)
+    response.raise_for_status()
+
+
+def create_dataobject(argholder, ks_token, cdmiver, container_name, obj_name,
+                      obj_data):
+    # create data object
+    headers, payload= {}, {}
+    headers.update(cdmiver)
+    headers.update({'accept': CDMI_OBJECT,
+                    'content-type': CDMI_OBJECT})
+    headers.update({'x-auth-token': ks_token})
+    payload = {'mimetype': 'text/plain'}
+    payload['value'] = unicode(obj_data)
+    payload['valuetransferencoding'] = 'utf-8'
+    response = requests.put(argholder.endpoint + container_name + obj_name,
+                            data=json.dumps(payload), headers=headers,
+                            cert=argholder.cert, verify=False)
+    response.raise_for_status()
+
+
+def get_dataobject(argholder, ks_token, cdmiver, container_name, obj_name):
+    # get data object
+    headers, payload= {}, {}
+    headers.update(cdmiver)
+    headers.update({'accept': CDMI_OBJECT,
+                    'content-type': CDMI_OBJECT})
+    headers.update({'x-auth-token': ks_token})
+    response = requests.get(argholder.endpoint + container_name + obj_name,
+                            headers=headers, cert=argholder.cert, verify=False)
+    response.raise_for_status()
+    return response.json()['value']
+
+
+def delete_dataobject(argholder, ks_token, cdmiver, container_name, obj_name):
+    # remove data object
+    headers, payload= {}, {}
+    headers.update(cdmiver)
+    headers.update({'x-auth-token': ks_token})
+    response = requests.delete(argholder.endpoint + container_name + obj_name,
+                               headers=headers, cert=argholder.cert, verify=False)
+    response.raise_for_status()
+
+
+def clean_up(argholder, ks_token, cdmiver, container_name, obj_name=None):
+    if obj_name:
+        try:
+            delete_dataobject(argholder, ks_token, cdmiver,
+                              container_name, obj_name)
+        except requests.exceptions.HTTPError as e:
+            sys.stderr.write('Clean up error: %s\n' % errmsg_from_excp(e))
+    try:
+        delete_container(argholder, ks_token, cdmiver, container_name)
+    except requests.exceptions.HTTPError as e:
+        sys.stderr.write('Clean up error: %s\n' % errmsg_from_excp(e))
+
+
 def main():
     class ArgHolder(object):
         pass
@@ -222,8 +297,6 @@ def main():
 
     if server_ok(argholder.endpoint, argholder.capath, argholder.timeout):
         for v, cdmiver in enumerate(HEADER_CDMI_VERSIONS):
-            passed = True
-
             # fetch scoped token for ops VO
             try:
                 ks_token = get_token(argholder.endpoint,
@@ -238,131 +311,76 @@ def main():
 
 
             randstr = '-'+''.join(random.sample('abcdefghijklmno', 3))
+            container_name = CONTAINER + randstr
             randdata = ''.join(random.sample('abcdefghij1234567890', 20))
+            obj_name = DOBJECT + randstr
 
             try:
-                # create container
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'accept': CDMI_CONTAINER,
-                                'content-type': CDMI_CONTAINER})
-                headers.update({'x-auth-token': ks_token})
-                response = requests.put(argholder.endpoint+CONTAINER+randstr+'/',
-                                        headers=headers, cert=argholder.cert, verify=False)
-                response.raise_for_status()
-
+                create_container(argholder, ks_token, cdmiver, container_name)
             except requests.exceptions.HTTPError as e:
-                passed = False
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - create_container failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             try:
-                # create data object
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'accept': CDMI_OBJECT,
-                                'content-type': CDMI_OBJECT})
-                headers.update({'x-auth-token': ks_token})
-                payload = {'mimetype': 'text/plain'}
-                payload['value'] = unicode(randdata)
-                payload['valuetransferencoding'] = 'utf-8'
-                response = requests.put(argholder.endpoint+CONTAINER+randstr+DOBJECT+randstr,
-                                        data=json.dumps(payload), headers=headers,
-                                        cert=argholder.cert, verify=False)
-                response.raise_for_status()
-
+                create_dataobject(argholder, ks_token, cdmiver, container_name,
+                                  obj_name, randdata)
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - create_dataobject failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             try:
-                # get data object
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'accept': CDMI_OBJECT,
-                                'content-type': CDMI_OBJECT})
-                headers.update({'x-auth-token': ks_token})
-                response = requests.get(argholder.endpoint+CONTAINER+randstr+DOBJECT+randstr,
-                                        headers=headers, cert=argholder.cert, verify=False)
-                response.raise_for_status()
-                if response.json()['value'] != randdata:
+                data = get_dataobject(argholder, ks_token, cdmiver,
+                                      container_name, obj_name)
+                if data != randdata:
                     raise requests.exceptions.HTTPError('data integrity violated')
-
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - get_dataobject failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             newranddata = ''.join(random.sample('abcdefghij1234567890', 20))
 
             try:
-                # update data object
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'accept': CDMI_OBJECT,
-                                'content-type': CDMI_OBJECT})
-                headers.update({'x-auth-token': ks_token})
-                payload = {'mimetype': 'text/plain'}
-                payload['value'] = unicode(newranddata)
-                payload['valuetransferencoding'] = 'utf-8'
-                response = requests.put(argholder.endpoint+CONTAINER+randstr+DOBJECT+randstr,
-                                        data=json.dumps(payload), headers=headers,
-                                        cert=argholder.cert, verify=False)
-                response.raise_for_status()
-
+                create_dataobject(argholder, ks_token, cdmiver, container_name,
+                                  obj_name, newranddata)
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - update_dataobject failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             try:
-                # get data object
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'accept': CDMI_OBJECT,
-                                'content-type': CDMI_OBJECT})
-                headers.update({'x-auth-token': ks_token})
-                response = requests.get(argholder.endpoint+CONTAINER+randstr+DOBJECT+randstr,
-                                        headers=headers, cert=argholder.cert, verify=False)
-                response.raise_for_status()
-                if response.json()['value'] != newranddata:
+                data = get_dataobject(argholder, ks_token, cdmiver,
+                                      container_name, obj_name)
+                if data != newranddata:
                     raise requests.exceptions.HTTPError('data integrity violated')
-
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - get_dataobject failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             try:
-                # remove data object
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'x-auth-token': ks_token})
-                response = requests.delete(argholder.endpoint+CONTAINER+randstr+DOBJECT+randstr,
-                                        headers=headers, cert=argholder.cert, verify=False)
-                response.raise_for_status()
-
+                delete_dataobject(argholder, ks_token, cdmiver, container_name,
+                                  obj_name)
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - delete_dataobject failed %s' % errmsg_from_excp(e), 2)
+                continue
 
             try:
-                # remove container
-                headers, payload= {}, {}
-                headers.update(cdmiver)
-                headers.update({'x-auth-token': ks_token})
-                response = requests.delete(argholder.endpoint+CONTAINER+randstr+'/',
-                                        headers=headers, cert=argholder.cert, verify=False)
-                response.raise_for_status()
-
+                delete_container(argholder, ks_token, cdmiver, container_name)
             except requests.exceptions.HTTPError as e:
-                passed = False
+                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', 'test - delete_container failed %s' % errmsg_from_excp(e), 2)
+                continue
 
-            if passed:
-                nagios_out('OK', 'container and dataobject creating, fetching and removing tests were successful', 0)
+            nagios_out('OK', 'container and dataobject creating, fetching and removing tests were successful', 0)
 
 main()
