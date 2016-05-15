@@ -16,7 +16,7 @@
 
 
 import argparse, re, random, signal
-import requests, sys, os, json, socket
+import requests, sys, os, json, socket, time
 
 from OpenSSL.SSL import TLSv1_METHOD, Context, Connection
 from OpenSSL.SSL import VERIFY_PEER, VERIFY_FAIL_IF_NO_PEER_CERT
@@ -31,6 +31,8 @@ CDMI_QUEUE = 'application/cdmi-queue'
 CONTAINER = '/container-probe'
 DOBJECT = '/dataobject-probe'
 
+OPWAIT = 2
+
 DEFAULT_PORT = 443
 
 def errmsg_from_excp(e):
@@ -43,8 +45,10 @@ def errmsg_from_excp(e):
             for s in e.args:
                 if isinstance(s, str):
                     retstr += s + ' '
-                if isinstance(s, tuple) or isinstance(s, tuple):
+                if isinstance(s, tuple):
                     retstr += ' '.join(s)
+                if isinstance(s, Exception):
+                    retstr = str(s)
             return retstr
         else:
             for s in e.args:
@@ -52,6 +56,7 @@ def errmsg_from_excp(e):
             return retstr
     else:
         return str(e)
+
 
 def server_ok(serverarg, capath, timeout):
     server_ctx = Context(TLSv1_METHOD)
@@ -99,9 +104,11 @@ def server_ok(serverarg, capath, timeout):
 
     return True
 
+
 def nagios_out(status, msg, retcode):
     sys.stdout.write(status+": "+msg+"\n")
     sys.exit(retcode)
+
 
 def get_token(server, userca, capath, timeout, cdmiver):
     try:
@@ -296,6 +303,7 @@ def main():
             nagios_out('Unknown', 'command-line arguments are not correct', 3)
 
     if server_ok(argholder.endpoint, argholder.capath, argholder.timeout):
+        ver = None
         for v, cdmiver in enumerate(HEADER_CDMI_VERSIONS):
             # fetch scoped token for ops VO
             try:
@@ -307,80 +315,73 @@ def main():
             except Exception as e:
                 if v == len(HEADER_CDMI_VERSIONS) - 1:
                     nagios_out('Critical', e.message, 2)
-                continue
 
+        # if we successfully fetched token, then we also have
+        # supported CDMI Specification version
+        ver = cdmiver
 
-            randstr = '-'+''.join(random.sample('abcdefghijklmno', 3))
-            container_name = CONTAINER + randstr
-            randdata = ''.join(random.sample('abcdefghij1234567890', 20))
-            obj_name = DOBJECT + randstr
+        randstr = '-'+''.join(random.sample('abcdefghijklmno', 3))
+        container_name = CONTAINER + randstr
+        randdata = ''.join(random.sample('abcdefghij1234567890', 20))
+        obj_name = DOBJECT + randstr
 
-            try:
-                create_container(argholder, ks_token, cdmiver, container_name)
-            except requests.exceptions.HTTPError as e:
-                if v == len(HEADER_CDMI_VERSIONS) - 1:
-                    nagios_out('Critical', 'test - create_container failed %s' % errmsg_from_excp(e), 2)
-                continue
+        try:
+            create_container(argholder, ks_token, ver, container_name)
+        except requests.exceptions.HTTPError as e:
+            nagios_out('Critical', 'test - create_container failed %s' % errmsg_from_excp(e), 2)
 
-            try:
-                create_dataobject(argholder, ks_token, cdmiver, container_name,
-                                  obj_name, randdata)
-            except requests.exceptions.HTTPError as e:
-                clean_up(argholder, ks_token, cdmiver, container_name)
-                if v == len(HEADER_CDMI_VERSIONS) - 1:
-                    nagios_out('Critical', 'test - create_dataobject failed %s' % errmsg_from_excp(e), 2)
-                continue
+        try:
+            create_dataobject(argholder, ks_token, ver, container_name,
+                              obj_name, randdata)
+        except requests.exceptions.HTTPError as e:
+            clean_up(argholder, ks_token, ver, container_name)
+            nagios_out('Critical', 'test - create_dataobject failed %s' % errmsg_from_excp(e), 2)
+        time.sleep(OPWAIT)
 
-            try:
-                data = get_dataobject(argholder, ks_token, cdmiver,
-                                      container_name, obj_name)
-                if data != randdata:
-                    raise requests.exceptions.HTTPError('data integrity violated')
-            except requests.exceptions.HTTPError as e:
-                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
-                if v == len(HEADER_CDMI_VERSIONS) - 1:
-                    nagios_out('Critical', 'test - get_dataobject failed %s' % errmsg_from_excp(e), 2)
-                continue
-
-            newranddata = ''.join(random.sample('abcdefghij1234567890', 20))
-
-            try:
-                create_dataobject(argholder, ks_token, cdmiver, container_name,
-                                  obj_name, newranddata)
-            except requests.exceptions.HTTPError as e:
-                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
-                if v == len(HEADER_CDMI_VERSIONS) - 1:
-                    nagios_out('Critical', 'test - update_dataobject failed %s' % errmsg_from_excp(e), 2)
-                continue
-
-            try:
-                data = get_dataobject(argholder, ks_token, cdmiver,
-                                      container_name, obj_name)
-                if data != newranddata:
-                    raise requests.exceptions.HTTPError('data integrity violated')
-            except requests.exceptions.HTTPError as e:
-                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
-                if v == len(HEADER_CDMI_VERSIONS) - 1:
-                    nagios_out('Critical', 'test - get_dataobject failed %s' % errmsg_from_excp(e), 2)
-                continue
-
-            try:
-                delete_dataobject(argholder, ks_token, cdmiver, container_name,
+        try:
+            data = get_dataobject(argholder, ks_token, ver, container_name,
                                   obj_name)
-            except requests.exceptions.HTTPError as e:
-                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
-                if v == len(HEADER_CDMI_VERSIONS) - 1:
-                    nagios_out('Critical', 'test - delete_dataobject failed %s' % errmsg_from_excp(e), 2)
-                continue
+            if data != randdata:
+                raise requests.exceptions.HTTPError('data integrity violated')
+        except requests.exceptions.HTTPError as e:
+            clean_up(argholder, ks_token, ver, container_name, obj_name)
+            nagios_out('Critical', 'test - get_dataobject failed %s' % errmsg_from_excp(e), 2)
+        time.sleep(OPWAIT)
 
-            try:
-                delete_container(argholder, ks_token, cdmiver, container_name)
-            except requests.exceptions.HTTPError as e:
-                clean_up(argholder, ks_token, cdmiver, container_name, obj_name)
-                if v == len(HEADER_CDMI_VERSIONS) - 1:
-                    nagios_out('Critical', 'test - delete_container failed %s' % errmsg_from_excp(e), 2)
-                continue
+        newranddata = ''.join(random.sample('abcdefghij1234567890', 20))
 
-            nagios_out('OK', 'container and dataobject creating, fetching and removing tests were successful', 0)
+        try:
+            create_dataobject(argholder, ks_token, ver, container_name,
+                              obj_name, newranddata)
+        except requests.exceptions.HTTPError as e:
+            clean_up(argholder, ks_token, ver, container_name, obj_name)
+            nagios_out('Critical', 'test - update_dataobject failed %s' % errmsg_from_excp(e), 2)
+        time.sleep(OPWAIT)
+
+        try:
+            data = get_dataobject(argholder, ks_token, ver, container_name,
+                                  obj_name)
+            if data != newranddata:
+                raise requests.exceptions.HTTPError('data integrity violated')
+        except requests.exceptions.HTTPError as e:
+            clean_up(argholder, ks_token, ver, container_name, obj_name)
+            nagios_out('Critical', 'test - get_dataobject failed %s' % errmsg_from_excp(e), 2)
+        time.sleep(OPWAIT)
+
+        try:
+            delete_dataobject(argholder, ks_token, ver, container_name,
+                              obj_name)
+        except requests.exceptions.HTTPError as e:
+            clean_up(argholder, ks_token, ver, container_name, obj_name)
+            nagios_out('Critical', 'test - delete_dataobject failed %s' % errmsg_from_excp(e), 2)
+        time.sleep(OPWAIT)
+
+        try:
+            delete_container(argholder, ks_token, ver, container_name)
+        except requests.exceptions.HTTPError as e:
+            clean_up(argholder, ks_token, ver, container_name, obj_name)
+            nagios_out('Critical', 'test - delete_container failed %s' % errmsg_from_excp(e), 2)
+
+        nagios_out('OK', 'container and dataobject creating, fetching and removing tests were successful', 0)
 
 main()
