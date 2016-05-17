@@ -3,7 +3,7 @@
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
 Version: 0.1.0
-Release: 5%{?dist}
+Release: 6%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
 Source0: %{name}-%{version}.tar.gz
@@ -33,6 +33,11 @@ rm -rf $RPM_BUILD_ROOT
 %{dir}
 
 %changelog
+* Fri May 13 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-6%{?dist}
+- cdmiprobe: add support for printing error msgs from packed exceptions 
+- cdmiprobe: wait some time before next operation
+- cdmiprobe: fetched token implies that we have supported CDMI Specification version
+- cdmiprobe: merged improvements with proper cleanup procedure by Enol Fernandez
 * Tue Jan 19 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-5%{?dist}
 - remove Py2.6 deprecations in cdmiprobe and novaprobe
 * Fri Oct 6 2015 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-4%{?dist}
