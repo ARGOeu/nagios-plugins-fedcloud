@@ -1,9 +1,9 @@
-%define dir %{_libdir}/nagios/plugins/fedcloud
+%define dir /usr/libexec/argo-monitoring/probes/fedcloud
 
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
-Version: 0.1.0
-Release: 6%{?dist}
+Version: 0.1.1
+Release: 7%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
 Source0: %{name}-%{version}.tar.gz
@@ -33,6 +33,8 @@ rm -rf $RPM_BUILD_ROOT
 %{dir}
 
 %changelog
+* Tue Nov 22 2016 Emir Imamagic <eimamagi@srce.hr> - 0.1.1-7%{?dist}
+- Probes location aligned with guidelines
 * Fri May 13 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-6%{?dist}
 - cdmiprobe: add support for printing error msgs from packed exceptions 
 - cdmiprobe: wait some time before next operation
