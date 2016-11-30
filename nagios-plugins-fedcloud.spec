@@ -2,7 +2,7 @@
 
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
-Version: 0.1.1
+Version: 0.1.2
 Release: 1%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
