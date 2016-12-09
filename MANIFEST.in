@@ -1,0 +1,5 @@
+include src/*
+include pymodule/*
+include nagios-plugins-fedcloud.spec
+
+recursive-exclude pymodule *.pyc
