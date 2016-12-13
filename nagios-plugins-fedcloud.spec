@@ -39,6 +39,8 @@ rm -rf $RPM_BUILD_ROOT
 %{python_sitelib}/nagios_plugins_fedcloud
 
 %changelog
+* Tue Dec 13 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.3-1%{?dist}
+- refactored keystone token and cert check code 
 * Tue Nov 22 2016 Emir Imamagic <eimamagi@srce.hr> - 0.1.1-7%{?dist}
 - Probes location aligned with guidelines
 * Fri May 13 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-6%{?dist}
