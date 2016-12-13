@@ -1,8 +1,10 @@
+# sitelib
+%{!?python_sitelib: %global python_sitelib %(%{__python} -c "from distutils.sysconfig import get_python_lib; print get_python_lib()")}
 %define dir /usr/libexec/argo-monitoring/probes/fedcloud
 
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
-Version: 0.1.2
+Version: 0.1.3
 Release: 1%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
@@ -19,20 +21,26 @@ Requires: pyOpenSSL
 %setup -q
 
 %build
+%{__python} setup.py build
 
 %install
 rm -rf $RPM_BUILD_ROOT
+%{__python} setup.py install --skip-build --root %{buildroot} --record=INSTALLED_FILES
 install --directory ${RPM_BUILD_ROOT}%{dir}
 install --mode 755 src/*  ${RPM_BUILD_ROOT}%{dir}
+install -d -m 755 %{buildroot}/%{python_sitelib}/nagios_plugins_fedcloud
 
 %clean
 rm -rf $RPM_BUILD_ROOT
 
-%files
+%files -f INSTALLED_FILES
 %defattr(-,root,root,-)
 %{dir}
+%{python_sitelib}/nagios_plugins_fedcloud
 
 %changelog
+* Tue Dec 13 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.3-1%{?dist}
+- refactored keystone token and cert check code 
 * Tue Nov 22 2016 Emir Imamagic <eimamagi@srce.hr> - 0.1.1-7%{?dist}
 - Probes location aligned with guidelines
 * Fri May 13 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-6%{?dist}
