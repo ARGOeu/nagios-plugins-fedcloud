@@ -4,7 +4,7 @@
 
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
-Version: 0.1.3
+Version: 0.1.4
 Release: 1%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
@@ -39,6 +39,8 @@ rm -rf $RPM_BUILD_ROOT
 %{python_sitelib}/nagios_plugins_fedcloud
 
 %changelog
+* Thu Apr 6 2017 Emir Imamagic <eimamagi@srce.hr> - 0.1.4-1%{?dist}
+- Version bump
 * Tue Dec 13 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.3-1%{?dist}
 - refactored keystone token and cert check code 
 * Tue Nov 22 2016 Emir Imamagic <eimamagi@srce.hr> - 0.1.1-7%{?dist}
