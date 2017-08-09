@@ -1,3 +1,4 @@
+import os
 import sys
 import re
 import socket
@@ -17,6 +18,73 @@ num_excp_expand = 0
 def nagios_out(status, msg, retcode):
     sys.stdout.write(status+": "+msg+"\n")
     sys.exit(retcode)
+
+def get_keystone_oidc_token(host, usertoken, capath, timeout):
+    if verify_cert(host, capath, timeout):
+        o = urlparse(host)
+        if o.scheme != 'https':
+            nagios_out('Critical', 'Connection error %s - Probe expects HTTPS endpoint' % (o.scheme+'://'+o.netloc), 2)
+
+        suffix = o.path.rstrip('/')
+        if suffix.endswith('v2.0') or suffix.endswith('v3'):
+            suffix = os.path.dirname(suffix)
+
+        try:
+            oidc_suffix = suffix + '/v3/OS-FEDERATION/identity_providers/egi.eu/protocols/oidc/auth'
+
+            headers, token = {}, None
+
+            headers.update({'Authorization': 'Bearer ' + usertoken})
+            headers.update({'accept': 'application/json'})
+            response = requests.post(o.scheme+'://'+o.netloc+oidc_suffix, headers=headers, timeout=timeout)
+            response.raise_for_status()
+            token = response.headers['X-Subject-Token']
+        except(KeyError, IndexError) as e:
+            nagios_out('Critical', 'Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e), 2)
+        except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
+            nagios_out('Critical', 'Connection error %s - %s' % (o.netloc+oidc_suffix, errmsg_from_excp(e)), 2)
+
+        try:
+            # use unscoped token to get a list of allowed projects mapped to
+            # ops VO from atuh token
+            project_suffix = suffix + '/v3/auth/projects'
+
+            headers = {'content-type': 'application/json', 'accept': 'application/json'}
+            headers.update({'x-auth-token': token})
+            response = requests.get(o.scheme+'://'+o.netloc+project_suffix, headers=headers,
+                                    data=None, timeout=timeout)
+            response.raise_for_status()
+            projects = response.json()['projects']
+            project = ''
+            for p in projects:
+                if 'ops' in p['name']:
+                    project = p['id']
+                    break
+            else:
+                # just take one
+                project = projects.pop()
+        except(KeyError, IndexError) as e:
+            nagios_out('Critical', 'Could not fetch allowed projects from response: Key not found %s' % errmsg_from_excp(e), 2)
+        except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
+            nagios_out('Critical', 'Connection error %s - %s' % (o.scheme+'://'+o.netloc+project_suffix, errmsg_from_excp(e)), 2)
+
+        try:
+            # get scoped token for allowed project
+            token_suffix = suffix + '/v3/auth/tokens'
+            headers = {'content-type': 'application/json', 'accept': 'application/json'}
+            payload = {"auth": {"identity": {"methods": ["token"], "token": {"id": token}},
+                                "scope": {"project": {"id": project["id"]}}}}
+            response = requests.post(o.scheme+'://'+o.netloc+token_suffix, headers=headers,
+                                    data=json.dumps(payload), verify=False, timeout=timeout)
+            response.raise_for_status()
+            token = response.headers['X-Subject-Token']
+        except(KeyError, IndexError) as e:
+            nagios_out('Critical', 'Could not fetch scoped keystone token for %s from response: Key not found %s' % (project, errmsg_from_excp(e)), 2)
+        except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
+            nagios_out('Critical', 'Connection error %s - %s' % (o.scheme+'://'+o.netloc+token_suffix, errmsg_from_excp(e)), 2)
+
+    return token, project, response
+
 
 def get_keystone_token(host, userca, capath, timeout):
     if verify_cert(host, capath, timeout):
