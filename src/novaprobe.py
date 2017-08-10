@@ -141,8 +141,8 @@ def main():
         headers = {'content-type': 'application/json', 'accept': 'application/json'}
         headers.update({'x-auth-token': ks_token})
         payload = {'server': {'name': SERVER_NAME,
-                                'imageRef': nova_url + '/images/%s' % (image),
-                                'flavorRef': nova_url + '/flavors/%s'% (flavor_id)}}
+                              'imageRef': image,
+                              'flavorRef': flavor_id}}
         response = requests.post(nova_url + '/servers', headers=headers,
                                     data=json.dumps(payload),
                                     cert=argholder.cert, verify=False,
