@@ -29,7 +29,31 @@ SERVER_NAME = 'cloudmonprobe-servertest'
 strerr = ''
 num_excp_expand = 0
 
-def get_info(tenant, last_response):
+def get_info_v3(tenant, last_response):
+    try:
+       tenant_id = last_response.json()['token']['project']['id']
+    except(KeyError, IndexError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch id for tenant %s: Key not found %s' % (tenant, helpers.errmsg_from_excp(e)), 2)
+
+    try:
+        service_catalog = last_response.json()['token']['catalog']
+    except(KeyError, IndexError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch service catalog: Key not found %s' % (helpers.errmsg_from_excp(e)), 2)
+
+    try:
+        nova_url = None
+        for e in service_catalog:
+            if e['type'] == 'compute':
+                for ep in e['endpoints']:
+                    if ep['interface'] == 'public':
+                        nova_url = ep['url']
+        assert nova_url is not None
+    except(KeyError, IndexError, AssertionError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: Key not found %s' % (helpers.errmsg_from_excp(e)), 2)
+
+    return tenant_id, nova_url
+
+def get_info_v2(tenant, last_response):
     try:
         tenant_id = last_response.json()['access']['token']['tenant']['id']
     except(KeyError, IndexError) as e:
@@ -64,14 +88,21 @@ def main():
     parser.add_argument('--flavor', dest='flavor', nargs='?')
     parser.add_argument('--image', dest='image', nargs='?')
     parser.add_argument('--cert', dest='cert', nargs='?')
+    parser.add_argument('--access-token', dest='access_token', nargs='?')
     parser.add_argument('-t', dest='timeout', type=int, nargs='?', default=120)
     parser.add_argument('--capath', dest='capath', nargs='?', default='/etc/grid-security/certificates')
 
     parser.parse_args(namespace=argholder)
 
-    for arg in ['endpoint', 'cert', 'capath', 'timeout']:
+    for arg in ['endpoint', 'capath', 'timeout']:
         if eval('argholder.'+arg) == None:
             argnotspec.append(arg)
+
+    if argholder.cert is None and argholder.access_token is None:
+        helpers.nagios_out('Unknown', 'cert or access-token command-line arguments not specified', 3)
+
+    if argholder.cert and argholder.access_token:
+        helpers.nagios_out('Unknown', 'both cert and accesstoken command-line arguments specified', 3)
 
     if len(argnotspec) > 0:
         msg_error_args = ''
@@ -80,13 +111,18 @@ def main():
         helpers.nagios_out('Unknown', 'command-line arguments not specified, '+msg_error_args, 3)
     else:
         if not argholder.endpoint.startswith("http") \
-                or not os.path.isfile(argholder.cert) \
                 or not type(argholder.timeout) == int \
                 or not os.path.isdir(argholder.capath):
             helpers.nagios_out('Unknown', 'command-line arguments are not correct', 3)
+        if argholder.cert and not os.path.isfile(argholder.cert):
+            helpers.nagios_out('Unknown', 'command-line arguments are not correct', 3)
 
-    ks_token, tenant, last_response = helpers.get_keystone_token(argholder.endpoint, argholder.cert, argholder.capath, argholder.timeout)
-    tenant_id, nova_url = get_info(tenant, last_response)
+    if argholder.cert:
+        ks_token, tenant, last_response = helpers.get_keystone_token(argholder.endpoint, argholder.cert, argholder.capath, argholder.timeout)
+        tenant_id, nova_url = get_info_v2(tenant, last_response)
+    else:
+        ks_token, tenant, last_response = helpers.get_keystone_oidc_token(argholder.endpoint, argholder.access_token, argholder.capath, argholder.timeout)
+        tenant_id, nova_url = get_info_v3(tenant, last_response)
 
     # remove once endpoints properly expose images openstackish way
     if not argholder.image:
@@ -141,8 +177,8 @@ def main():
         headers = {'content-type': 'application/json', 'accept': 'application/json'}
         headers.update({'x-auth-token': ks_token})
         payload = {'server': {'name': SERVER_NAME,
-                                'imageRef': nova_url + '/images/%s' % (image),
-                                'flavorRef': nova_url + '/flavors/%s'% (flavor_id)}}
+                              'imageRef': image,
+                              'flavorRef': flavor_id}}
         response = requests.post(nova_url + '/servers', headers=headers,
                                     data=json.dumps(payload),
                                     cert=argholder.cert, verify=False,
