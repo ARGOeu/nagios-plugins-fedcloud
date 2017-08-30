@@ -4,7 +4,7 @@
 
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
-Version: 0.1.4
+Version: 0.1.5
 Release: 1%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
@@ -39,6 +39,9 @@ rm -rf $RPM_BUILD_ROOT
 %{python_sitelib}/nagios_plugins_fedcloud
 
 %changelog
+* Wed Aug 30 2017 Daniel Vrcic <dvrcic@srce.hr> - 0.1.5-1%{?dist}
+- novaprobe: use of ids insteads of urls for flavors and image by Enol Fernandez
+- novaprobe: added support for OIDC tokens by Enol Fernandez
 * Thu Apr 6 2017 Emir Imamagic <eimamagi@srce.hr> - 0.1.4-1%{?dist}
 - Version bump
 * Tue Dec 13 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.3-1%{?dist}
