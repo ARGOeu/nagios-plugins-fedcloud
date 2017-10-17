@@ -115,13 +115,18 @@ def main():
                 or not os.path.isdir(argholder.capath):
             helpers.nagios_out('Unknown', 'command-line arguments are not correct', 3)
         if argholder.cert and not os.path.isfile(argholder.cert):
-            helpers.nagios_out('Unknown', 'command-line arguments are not correct', 3)
+            helpers.nagios_out('Unknown', 'cert file does not exist', 3)
+        if argholder.access_token and not os.path.isfile(argholder.access_token):
+            helpers.nagios_out('Unknown', 'access-token file does not exist', 3)
 
     if argholder.cert:
         ks_token, tenant, last_response = helpers.get_keystone_token(argholder.endpoint, argholder.cert, argholder.capath, argholder.timeout)
         tenant_id, nova_url = get_info_v2(tenant, last_response)
     else:
-        ks_token, tenant, last_response = helpers.get_keystone_oidc_token(argholder.endpoint, argholder.access_token, argholder.capath, argholder.timeout)
+        access_file = open(argholder.access_token, 'r')
+        access_token = access_file.read().rstrip("\n")
+        access_file.close()
+        ks_token, tenant, last_response = helpers.get_keystone_oidc_token(argholder.endpoint, access_token, argholder.capath, argholder.timeout)
         tenant_id, nova_url = get_info_v3(tenant, last_response)
 
     # remove once endpoints properly expose images openstackish way
