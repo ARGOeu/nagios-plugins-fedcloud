@@ -36,7 +36,9 @@ def get_keystone_oidc_token(host, usertoken, capath, timeout):
 
             headers.update({'Authorization': 'Bearer ' + usertoken})
             headers.update({'accept': 'application/json'})
-            response = requests.post(o.scheme+'://'+o.netloc+oidc_suffix, headers=headers, timeout=timeout)
+            response = requests.post(o.scheme+'://'+o.netloc+oidc_suffix,
+                                     headers=headers, timeout=timeout,
+                                     verify=False)
             response.raise_for_status()
             token = response.headers['X-Subject-Token']
         except(KeyError, IndexError) as e:
@@ -52,7 +54,7 @@ def get_keystone_oidc_token(host, usertoken, capath, timeout):
             headers = {'content-type': 'application/json', 'accept': 'application/json'}
             headers.update({'x-auth-token': token})
             response = requests.get(o.scheme+'://'+o.netloc+project_suffix, headers=headers,
-                                    data=None, timeout=timeout)
+                                    data=None, timeout=timeout, verify=False)
             response.raise_for_status()
             projects = response.json()['projects']
             project = ''
