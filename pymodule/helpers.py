@@ -95,11 +95,7 @@ def get_keystone_token(host, userca, capath, timeout):
             nagios_out('Critical', 'Connection error %s - Probe expects HTTPS endpoint' % (o.scheme+'://'+o.netloc), 2)
         try:
             # fetch unscoped token
-            token_suffix = ''
-            if o.netloc.endswith('v2.0'):
-                token_suffix = token_suffix+'/tokens'
-            elif o.netloc.endswith('5000'):
-                token_suffix = token_suffix+'/v2.0/tokens'
+            token_suffix = o.path.rstrip('/') + '/tokens'
 
             headers, payload, token = {}, {}, None
             headers.update({'Accept': '*/*'})
@@ -118,11 +114,8 @@ def get_keystone_token(host, userca, capath, timeout):
         try:
             # use unscoped token to get a list of allowed tenants mapped to
             # ops VO from VOMS proxy cert
-            tenant_suffix= ''
-            if o.netloc.endswith("v2.0"):
-                tenant_suffix = tenant_suffix+'/tenants'
-            else:
-                tenant_suffix = tenant_suffix+'/v2.0/tenants'
+            tenant_suffix = o.path.rstrip('/') + '/tenants'
+
             headers = {'content-type': 'application/json', 'accept': 'application/json'}
             headers.update({'x-auth-token': token})
             response = requests.get(o.scheme+'://'+o.netloc+tenant_suffix, headers=headers,
