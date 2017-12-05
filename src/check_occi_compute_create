@@ -26,7 +26,7 @@ extend Occi::Api::Dsl
 
 ## aux class definitions
 module Occi::Probe
-  VERSION = "0.0.3"
+  VERSION = "0.0.4"
   BASIC_KINDS = %w(compute network storage)
   BASIC_MIXINS = %w(os_tpl resource_tpl)
   CONTEXTUALIZATION_MIXINS = %w(http://schemas.openstack.org/instance/credentials#public_key http://schemas.openstack.org/compute/instance#user_data)
@@ -343,9 +343,11 @@ begin
   end
 
   ## do some clean-up first
-  ## this is done twice on purpose to trigger force-destroy in rOCCI-server
-  delete('compute')
-  delete('compute')
+  begin
+    delete('compute')
+  rescue => _ex
+    # ignore clean-up errors
+  end
 
   ## start executing
   res = resource(options.resource)
