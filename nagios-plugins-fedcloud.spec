@@ -4,7 +4,7 @@
 
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
-Version: 0.1.6
+Version: 0.1.7
 Release: 1%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
@@ -39,6 +39,8 @@ rm -rf $RPM_BUILD_ROOT
 %{python_sitelib}/nagios_plugins_fedcloud
 
 %changelog
+* Fri Dec 8 2017 Daniel Vrcic <dvrcic@srce.hr> - 0.1.7-1%{?dist}
+- graceful clean-up for OCCI compute probe  
 * Mon Nov 20 2017 Daniel Vrcic <dvrcic@srce.hr> - 0.1.6-1%{?dist}
 - novaprobe: remove hardcoded port check in token suffix
 - novaprobe: ARGO-948 Access token parameter should be file
