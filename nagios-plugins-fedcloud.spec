@@ -30,6 +30,10 @@ install --directory ${RPM_BUILD_ROOT}%{dir}
 install --mode 755 src/*  ${RPM_BUILD_ROOT}%{dir}
 install -d -m 755 %{buildroot}/%{python_sitelib}/nagios_plugins_fedcloud
 
+%if 0%{?el7:1}
+rm -f ${RPM_BUILD_ROOT}%{dir}/check_occi_compute_create
+%endif
+
 %clean
 rm -rf $RPM_BUILD_ROOT
 
