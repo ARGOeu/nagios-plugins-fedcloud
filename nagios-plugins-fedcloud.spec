@@ -30,10 +30,6 @@ install --directory ${RPM_BUILD_ROOT}%{dir}
 install --mode 755 src/*  ${RPM_BUILD_ROOT}%{dir}
 install -d -m 755 %{buildroot}/%{python_sitelib}/nagios_plugins_fedcloud
 
-%if 0%{?el7:1}
-rm -f ${RPM_BUILD_ROOT}%{dir}/check_occi_compute_create
-%endif
-
 %clean
 rm -rf $RPM_BUILD_ROOT
 
@@ -41,6 +37,9 @@ rm -rf $RPM_BUILD_ROOT
 %defattr(-,root,root,-)
 %{dir}
 %{python_sitelib}/nagios_plugins_fedcloud
+%if 0%{?el7:1}
+%exclude %{dir}/check_occi_compute_create
+%endif
 
 %changelog
 * Fri Dec 8 2017 Daniel Vrcic <dvrcic@srce.hr> - 0.1.7-1%{?dist}
