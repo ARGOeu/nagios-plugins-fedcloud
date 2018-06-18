@@ -129,6 +129,10 @@ def get_keystone_token(host, userca, capath, timeout):
             for t in tenants:
                 if 'ops' in t['name']:
                     tenant = t['name']
+                    break
+            else:
+                # just take one
+                tenant = tenants.pop()['name']
         except(KeyError, IndexError) as e:
             raise AuthenticationException('Could not fetch allowed tenants from response: Key not found %s' % errmsg_from_excp(e))
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
