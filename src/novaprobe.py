@@ -101,9 +101,6 @@ def main():
     if argholder.cert is None and argholder.access_token is None:
         helpers.nagios_out('Unknown', 'cert or access-token command-line arguments not specified', 3)
 
-    if argholder.cert and argholder.access_token:
-        helpers.nagios_out('Unknown', 'both cert and accesstoken command-line arguments specified', 3)
-
     if len(argnotspec) > 0:
         msg_error_args = ''
         for arg in argnotspec:
@@ -119,15 +116,35 @@ def main():
         if argholder.access_token and not os.path.isfile(argholder.access_token):
             helpers.nagios_out('Unknown', 'access-token file does not exist', 3)
 
-    if argholder.cert:
-        ks_token, tenant, last_response = helpers.get_keystone_token(argholder.endpoint, argholder.cert, argholder.capath, argholder.timeout)
-        tenant_id, nova_url = get_info_v2(tenant, last_response)
-    else:
+    ks_token = None
+    if argholder.access_token:
         access_file = open(argholder.access_token, 'r')
         access_token = access_file.read().rstrip("\n")
         access_file.close()
-        ks_token, tenant, last_response = helpers.get_keystone_oidc_token(argholder.endpoint, access_token, argholder.capath, argholder.timeout)
-        tenant_id, nova_url = get_info_v3(tenant, last_response)
+        try:
+            ks_token, tenant, last_response = helpers.get_keystone_oidc_token(argholder.endpoint,
+                                                                              access_token,
+                                                                              argholder.capath,
+                                                                              argholder.timeout)
+            tenant_id, nova_url = get_info_v3(tenant, last_response)
+        except helpers.AuthenticationException as e:
+            # log the error but don't really fail
+            print 'Unable to authenticate with OIDC: %s' % e
+    if not ks_token:
+        if argholder.cert:
+            # try with certificate
+            try:
+                ks_token, tenant, last_response = helpers.get_keystone_token(argholder.endpoint,
+                                                                             argholder.cert,
+                                                                             argholder.capath,
+                                                                             argholder.timeout)
+                tenant_id, nova_url = get_info_v2(tenant, last_response)
+            except helpers.AuthenticationException as e:
+                # no more authentication methods to try, fail here
+                helpers.nagios_out('Critical', str(e), 2)
+        else:
+            # just fail
+            helpers.nagios_out('Critical', 'Unable to authenticate against Keystone', 2)
 
     # remove once endpoints properly expose images openstackish way
     if not argholder.image:

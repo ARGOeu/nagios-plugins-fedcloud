@@ -15,6 +15,9 @@ from urlparse import urlparse
 strerr = ''
 num_excp_expand = 0
 
+class AuthenticationException(Exception):
+    pass
+
 def nagios_out(status, msg, retcode):
     sys.stdout.write(status+": "+msg+"\n")
     sys.exit(retcode)
@@ -23,7 +26,7 @@ def get_keystone_oidc_token(host, usertoken, capath, timeout):
     if verify_cert(host, capath, timeout):
         o = urlparse(host)
         if o.scheme != 'https':
-            nagios_out('Critical', 'Connection error %s - Probe expects HTTPS endpoint' % (o.scheme+'://'+o.netloc), 2)
+            raise AuthenticationException('Connection error %s - Probe expects HTTPS endpoint' % (o.scheme+'://'+o.netloc))
 
         suffix = o.path.rstrip('/')
         if suffix.endswith('v2.0') or suffix.endswith('v3'):
@@ -42,9 +45,9 @@ def get_keystone_oidc_token(host, usertoken, capath, timeout):
             response.raise_for_status()
             token = response.headers['X-Subject-Token']
         except(KeyError, IndexError) as e:
-            nagios_out('Critical', 'Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e), 2)
+            raise AuthenticationException('Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e))
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            nagios_out('Critical', 'Connection error %s - %s' % (o.netloc+oidc_suffix, errmsg_from_excp(e)), 2)
+            raise AuthenticationException('Connection error %s - %s' % (o.netloc+oidc_suffix, errmsg_from_excp(e)))
 
         try:
             # use unscoped token to get a list of allowed projects mapped to
@@ -66,9 +69,9 @@ def get_keystone_oidc_token(host, usertoken, capath, timeout):
                 # just take one
                 project = projects.pop()
         except(KeyError, IndexError) as e:
-            nagios_out('Critical', 'Could not fetch allowed projects from response: Key not found %s' % errmsg_from_excp(e), 2)
+            raise AuthenticationException('Could not fetch allowed projects from response: Key not found %s' % errmsg_from_excp(e))
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            nagios_out('Critical', 'Connection error %s - %s' % (o.scheme+'://'+o.netloc+project_suffix, errmsg_from_excp(e)), 2)
+            raise AuthenticationException('Connection error %s - %s' % (o.scheme+'://'+o.netloc+project_suffix, errmsg_from_excp(e)))
 
         try:
             # get scoped token for allowed project
@@ -81,9 +84,9 @@ def get_keystone_oidc_token(host, usertoken, capath, timeout):
             response.raise_for_status()
             token = response.headers['X-Subject-Token']
         except(KeyError, IndexError) as e:
-            nagios_out('Critical', 'Could not fetch scoped keystone token for %s from response: Key not found %s' % (project, errmsg_from_excp(e)), 2)
+            raise AuthenticationException('Could not fetch scoped keystone token for %s from response: Key not found %s' % (project, errmsg_from_excp(e)))
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            nagios_out('Critical', 'Connection error %s - %s' % (o.scheme+'://'+o.netloc+token_suffix, errmsg_from_excp(e)), 2)
+            raise AuthenticationException('Connection error %s - %s' % (o.scheme+'://'+o.netloc+token_suffix, errmsg_from_excp(e)))
 
     return token, project, response
 
@@ -92,7 +95,7 @@ def get_keystone_token(host, userca, capath, timeout):
     if verify_cert(host, capath, timeout):
         o = urlparse(host)
         if o.scheme != 'https':
-            nagios_out('Critical', 'Connection error %s - Probe expects HTTPS endpoint' % (o.scheme+'://'+o.netloc), 2)
+            raise AuthenticationException('Connection error %s - Probe expects HTTPS endpoint' % (o.scheme+'://'+o.netloc))
         try:
             # fetch unscoped token
             token_suffix = o.path.rstrip('/') + '/tokens'
@@ -107,9 +110,9 @@ def get_keystone_token(host, userca, capath, timeout):
             response.raise_for_status()
             token = response.json()['access']['token']['id']
         except(KeyError, IndexError) as e:
-            nagios_out('Critical', 'Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e), 2)
+            raise AuthenticationException('Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e))
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            nagios_out('Critical', 'Connection error %s - %s' % (o.netloc+token_suffix, errmsg_from_excp(e)), 2)
+            raise AuthenticationException('Connection error %s - %s' % (o.netloc+oidc_suffix, errmsg_from_excp(e)))
 
         try:
             # use unscoped token to get a list of allowed tenants mapped to
@@ -126,10 +129,14 @@ def get_keystone_token(host, userca, capath, timeout):
             for t in tenants:
                 if 'ops' in t['name']:
                     tenant = t['name']
+                    break
+            else:
+                # just take one
+                tenant = tenants.pop()['name']
         except(KeyError, IndexError) as e:
-            nagios_out('Critical', 'Could not fetch allowed tenants from response: Key not found %s' % errmsg_from_excp(e), 2)
+            raise AuthenticationException('Could not fetch allowed tenants from response: Key not found %s' % errmsg_from_excp(e))
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            nagios_out('Critical', 'Connection error %s - %s' % (o.scheme+'://'+o.netloc+tenant_suffix, errmsg_from_excp(e)), 2)
+            raise AuthenticationException('Connection error %s - %s' % (o.scheme+'://'+o.netloc+project_suffix, errmsg_from_excp(e)))
 
         try:
             # get scoped token for allowed tenant
@@ -140,9 +147,9 @@ def get_keystone_token(host, userca, capath, timeout):
             response.raise_for_status()
             token = response.json()['access']['token']['id']
         except(KeyError, IndexError) as e:
-            nagios_out('Critical', 'Could not fetch scoped keystone token for %s from response: Key not found %s' % (tenant, errmsg_from_excp(e)), 2)
+            raise AuthenticationException('Could not fetch scoped keystone token for %s from response: Key not found %s' % (tenant, errmsg_from_excp(e)))
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            nagios_out('Critical', 'Connection error %s - %s' % (o.scheme+'://'+o.netloc+token_suffix, errmsg_from_excp(e)), 2)
+            raise AuthenticationException('Connection error %s - %s' % (o.scheme+'://'+o.netloc+token_suffix, errmsg_from_excp(e)))
 
     return token, tenant, response
 
