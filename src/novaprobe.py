@@ -33,12 +33,12 @@ def get_info_v3(tenant, last_response):
     try:
        tenant_id = last_response.json()['token']['project']['id']
     except(KeyError, IndexError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch id for tenant %s: Key not found %s' % (tenant, helpers.errmsg_from_excp(e)), 2)
+        helpers.nagios_out('Critical', 'Could not fetch id for tenant %s: %s' % (tenant, helpers.errmsg_from_excp(e)), 2)
 
     try:
         service_catalog = last_response.json()['token']['catalog']
     except(KeyError, IndexError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch service catalog: Key not found %s' % (helpers.errmsg_from_excp(e)), 2)
+        helpers.nagios_out('Critical', 'Could not fetch service catalog: %s' % (helpers.errmsg_from_excp(e)), 2)
 
     try:
         nova_url = None
@@ -47,31 +47,39 @@ def get_info_v3(tenant, last_response):
                 for ep in e['endpoints']:
                     if ep['interface'] == 'public':
                         nova_url = ep['url']
+            if e['type'] == 'image':
+                for ep in e['endpoints']:
+                    if ep['interface'] == 'public':
+                        glance_url = ep['url']
         assert nova_url is not None
+        assert glance_url is not None
     except(KeyError, IndexError, AssertionError) as e:
         helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: Key not found %s' % (helpers.errmsg_from_excp(e)), 2)
 
-    return tenant_id, nova_url
+    return tenant_id, nova_url, glance_url
 
 def get_info_v2(tenant, last_response):
     try:
         tenant_id = last_response.json()['access']['token']['tenant']['id']
     except(KeyError, IndexError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch id for tenant %s: Key not found %s' % (tenant, helpers.errmsg_from_excp(e)), 2)
+        helpers.nagios_out('Critical', 'Could not fetch id for tenant %s: %s' % (tenant, helpers.errmsg_from_excp(e)), 2)
 
     try:
         service_catalog = last_response.json()['access']['serviceCatalog']
     except(KeyError, IndexError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch service catalog: Key not found %s' % (helpers.errmsg_from_excp(e)))
+        helpers.nagios_out('Critical', 'Could not fetch service catalog: %s' % (helpers.errmsg_from_excp(e)))
 
     try:
         nova_url = None
         for e in service_catalog:
             if e['type'] == 'compute':
                 nova_url = e['endpoints'][0]['publicURL']
+            if e['type'] == 'glance':
+                glance_url = e['endpoints'][0]['publicURL']
         assert nova_url is not None
+        assert glance_url is not None
     except(KeyError, IndexError, AssertionError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: Key not found %s' % (helpers.errmsg_from_excp(e)))
+        helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: %s' % (helpers.errmsg_from_excp(e)))
 
     return tenant_id, nova_url
 
@@ -126,7 +134,7 @@ def main():
                                                                                  access_token,
                                                                                  argholder.capath,
                                                                                  argholder.timeout)
-            tenant_id, nova_url = get_info_v3(tenant, last_response)
+            tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
         except helpers.AuthenticationException as e:
             # log the error but don't really fail
             print 'Unable to authenticate with OIDC: %s' % e
@@ -148,7 +156,7 @@ def main():
                                                                                      argholder.cert,
                                                                                      argholder.capath,
                                                                                      argholder.timeout)
-                tenant_id, nova_url = get_info_v2(tenant, last_response)
+                tenant_id, nova_url, glance_url = get_info_v2(tenant, last_response)
             except helpers.AuthenticationException as e:
                 # no more authentication methods to try, fail here
                 helpers.nagios_out('Critical', str(e), 2)
@@ -178,8 +186,9 @@ def main():
         print 'Image:%s' % (image)
         print 'Flavor:%s' % (flavor)
         print 'Auth token (cut to 64 chars): %.64s' % ks_token
-        print 'Tenant OPS, ID:%s' % tenant_id
+        print 'Project OPS, ID:%s' % tenant_id
         print 'Nova: %s' % nova_url
+        print 'Glance: %s' % glance_url
 
     # fetch flavor_id for given flavor (resource)
     try:
