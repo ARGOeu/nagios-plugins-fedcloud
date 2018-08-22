@@ -83,10 +83,10 @@ def get_keystone_v3_token(unscoped_token_getter, host, usertoken, capath, timeou
                                     data=None, timeout=timeout, verify=False)
             response.raise_for_status()
             projects = response.json()['projects']
-            project = ''
+            project = {}
             for p in projects:
                 if 'ops' in p['name']:
-                    project = p['id']
+                    project = p
                     break
             else:
                 # just take one
