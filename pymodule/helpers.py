@@ -22,7 +22,45 @@ def nagios_out(status, msg, retcode):
     sys.stdout.write(status+": "+msg+"\n")
     sys.exit(retcode)
 
-def get_keystone_oidc_token(host, usertoken, capath, timeout):
+
+def get_keystone_oidc_unscoped_token(netloc, suffix, token, timeout):
+    try:
+        oidc_suffix = suffix + '/v3/OS-FEDERATION/identity_providers/egi.eu/protocols/oidc/auth'
+
+        headers, token = {}, None
+
+        headers.update({'Authorization': 'Bearer ' + token})
+        headers.update({'accept': 'application/json'})
+        response = requests.post(o.scheme+'://'+netloc+oidc_suffix,
+                                 headers=headers, timeout=timeout,
+                                 verify=False)
+        response.raise_for_status()
+        return response.headers['X-Subject-Token']
+    except(KeyError, IndexError) as e:
+        raise AuthenticationException('Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e))
+    except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
+        raise AuthenticationException('Connection error %s - %s' % (o.netloc+oidc_suffix, errmsg_from_excp(e)))
+
+def get_keystone_x509_unscoped_token(netloc, suffix, userca, timeout):
+    try:
+        token_suffix = suffix + '/v3/OS-FEDERATION/identity_providers/egi.eu/protocols/mapped/auth'
+
+        headers, token = {}, None
+
+        headers.update({'accept': 'application/json'})
+
+        response = requests.post(o.scheme+'://'+o.netloc+token_suffix, headers=headers,
+                                 cert=userca, verify=False, timeout=timeout)
+
+        response.raise_for_status()
+        return response.headers['X-Subject-Token']
+    except(KeyError, IndexError) as e:
+        raise AuthenticationException('Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e))
+    except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
+        raise AuthenticationException('Connection error %s - %s' % (o.netloc+oidc_suffix, errmsg_from_excp(e)))
+
+
+def get_keystone_v3_token(unscoped_token_getter, host, usertoken, capath, timeout):
     if verify_cert(host, capath, timeout):
         o = urlparse(host)
         if o.scheme != 'https':
@@ -32,22 +70,7 @@ def get_keystone_oidc_token(host, usertoken, capath, timeout):
         if suffix.endswith('v2.0') or suffix.endswith('v3'):
             suffix = os.path.dirname(suffix)
 
-        try:
-            oidc_suffix = suffix + '/v3/OS-FEDERATION/identity_providers/egi.eu/protocols/oidc/auth'
-
-            headers, token = {}, None
-
-            headers.update({'Authorization': 'Bearer ' + usertoken})
-            headers.update({'accept': 'application/json'})
-            response = requests.post(o.scheme+'://'+o.netloc+oidc_suffix,
-                                     headers=headers, timeout=timeout,
-                                     verify=False)
-            response.raise_for_status()
-            token = response.headers['X-Subject-Token']
-        except(KeyError, IndexError) as e:
-            raise AuthenticationException('Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e))
-        except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            raise AuthenticationException('Connection error %s - %s' % (o.netloc+oidc_suffix, errmsg_from_excp(e)))
+        token = unscoped_token_getter(netloc, suffix, usertoken, timeout)
 
         try:
             # use unscoped token to get a list of allowed projects mapped to
@@ -91,7 +114,14 @@ def get_keystone_oidc_token(host, usertoken, capath, timeout):
     return token, project, response
 
 
-def get_keystone_token(host, userca, capath, timeout):
+def get_keystone_token_oidc_v3(host, usertoken, capath, timeout):
+    return get_keystone_v3_token(get_keystone_oidc_unscoped_token, host, usertoken, capath, timeout)
+
+def get_keystone_token_x509_v3(host, userca, capath, timeout):
+    return get_keystone_v3_token(get_keystone_x509_unscoped_token, host, userca, capath, timeout)
+
+
+def get_keystone_token_x509_v2(host, userca, capath, timeout):
     if verify_cert(host, capath, timeout):
         o = urlparse(host)
         if o.scheme != 'https':
