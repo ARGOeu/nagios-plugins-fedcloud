@@ -23,15 +23,15 @@ def nagios_out(status, msg, retcode):
     sys.exit(retcode)
 
 
-def get_keystone_oidc_unscoped_token(netloc, suffix, token, timeout):
+def get_keystone_oidc_unscoped_token(parsed_url, suffix, token, timeout):
     try:
         oidc_suffix = suffix + '/v3/OS-FEDERATION/identity_providers/egi.eu/protocols/oidc/auth'
 
-        headers, token = {}, None
+        headers = {}
 
         headers.update({'Authorization': 'Bearer ' + token})
         headers.update({'accept': 'application/json'})
-        response = requests.post(o.scheme+'://'+netloc+oidc_suffix,
+        response = requests.post(parsed_url.scheme+'://'+parsed_url.netloc+oidc_suffix,
                                  headers=headers, timeout=timeout,
                                  verify=False)
         response.raise_for_status()
@@ -39,17 +39,18 @@ def get_keystone_oidc_unscoped_token(netloc, suffix, token, timeout):
     except(KeyError, IndexError) as e:
         raise AuthenticationException('Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e))
     except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-        raise AuthenticationException('Connection error %s - %s' % (o.netloc+oidc_suffix, errmsg_from_excp(e)))
+        raise AuthenticationException('Connection error %s - %s' % (parsed_url.netloc+oidc_suffix, errmsg_from_excp(e)))
 
-def get_keystone_x509_unscoped_token(netloc, suffix, userca, timeout):
+
+def get_keystone_x509_unscoped_token(parsed_url, suffix, userca, timeout):
     try:
         token_suffix = suffix + '/v3/OS-FEDERATION/identity_providers/egi.eu/protocols/mapped/auth'
 
-        headers, token = {}, None
+        headers = {}
 
         headers.update({'accept': 'application/json'})
 
-        response = requests.post(o.scheme+'://'+o.netloc+token_suffix, headers=headers,
+        response = requests.post(parsed_url.scheme+'://'+ parsed_url.netloc + token_suffix, headers=headers,
                                  cert=userca, verify=False, timeout=timeout)
 
         response.raise_for_status()
@@ -57,7 +58,7 @@ def get_keystone_x509_unscoped_token(netloc, suffix, userca, timeout):
     except(KeyError, IndexError) as e:
         raise AuthenticationException('Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e))
     except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-        raise AuthenticationException('Connection error %s - %s' % (o.netloc+oidc_suffix, errmsg_from_excp(e)))
+        raise AuthenticationException('Connection error %s - %s' % (parsed_url.netloc+oidc_suffix, errmsg_from_excp(e)))
 
 
 def get_keystone_v3_token(unscoped_token_getter, host, usertoken, capath, timeout):
@@ -70,7 +71,7 @@ def get_keystone_v3_token(unscoped_token_getter, host, usertoken, capath, timeou
         if suffix.endswith('v2.0') or suffix.endswith('v3'):
             suffix = os.path.dirname(suffix)
 
-        token = unscoped_token_getter(netloc, suffix, usertoken, timeout)
+        token = unscoped_token_getter(o, suffix, usertoken, timeout)
 
         try:
             # use unscoped token to get a list of allowed projects mapped to
