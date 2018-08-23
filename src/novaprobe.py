@@ -14,10 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#from pprint import pprint
+# from pprint import pprint
 
 import argparse, re
 import requests, sys, os, json
+import urlparse
 import time
 
 from nagios_plugins_fedcloud import helpers
@@ -84,6 +85,28 @@ def get_info_v2(tenant, last_response):
     return tenant_id, nova_url
 
 
+def get_image_id(glance_url, ks_token, appdb_id):
+    next_url = 'v2/images'
+    try:
+        # TODO: query for the exact image directly once that info is available in glance
+        # that should remove the need for the loop
+        while next_url:
+            images_url  = urlparse.urljoin(glance_url, next_url)
+            response = requests.get(images_url, headers = {'x-auth-token': ks_token})
+            response.raise_for_status()
+            for img in response.json()['images']:
+                attrs = json.loads(img.get('APPLIANCE_ATTRIBUTES', '{}'))
+                if attrs.get('ad:appid', '') == appdb_id:
+                    return img['id']
+            next_url = response.json().get('next', '')
+    except (requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch image ID: %s' % helpers.errmsg_from_excp(e), 2)
+    except (AssertionError, IndexError, AttributeError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch image ID: %s' % str(e), 2)
+    helpers.nagios_out('Critical', 'Could not find image ID for AppDB image %s' % appdb_id, 2)
+
+
 def main():
     class ArgHolder(object):
         pass
@@ -99,6 +122,7 @@ def main():
     parser.add_argument('--access-token', dest='access_token', nargs='?')
     parser.add_argument('-t', dest='timeout', type=int, nargs='?', default=120)
     parser.add_argument('--capath', dest='capath', nargs='?', default='/etc/grid-security/certificates')
+    parser.add_argument('--appdb-image', dest='appdb_img', nargs='?')
 
     parser.parse_args(namespace=argholder)
 
@@ -108,6 +132,9 @@ def main():
 
     if argholder.cert is None and argholder.access_token is None:
         helpers.nagios_out('Unknown', 'cert or access-token command-line arguments not specified', 3)
+
+    if argholder.image is None and argholder.appdb_img is None:
+        helpers.nagios_out('Unknown', 'image or appdb-image command-line arguments not specified', 3)
 
     if len(argnotspec) > 0:
         msg_error_args = ''
@@ -164,12 +191,8 @@ def main():
             # just fail
             helpers.nagios_out('Critical', 'Unable to authenticate against Keystone', 2)
 
-    # remove once endpoints properly expose images openstackish way
     if not argholder.image:
-        try:
-            image = re.search("(\?image=)([\w\-]*)", argholder.endpoint).group(2)
-        except (AttributeError, IndexError):
-            helpers.nagios_out('Unknown', 'image UUID is not specifed for endpoint', 3)
+        image = get_image_id(glance_url, ks_token, argholder.appdb_img)
     else:
         image = argholder.image
 
