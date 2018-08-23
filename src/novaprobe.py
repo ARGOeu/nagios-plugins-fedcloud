@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# from pprint import pprint
+# from pprint import pprint
 
 import argparse, re
 import requests, sys, os, json
@@ -107,6 +107,28 @@ def get_image_id(glance_url, ks_token, appdb_id):
     helpers.nagios_out('Critical', 'Could not find image ID for AppDB image %s' % appdb_id, 2)
 
 
+def get_smaller_flavor_id(nova_url, ks_token):
+    flavor_url = urlparse.urljoin(nova_url, 'flavors/detail')
+    # flavors with at least 8GB of disk, sorted by number of cpus
+    query = {'minDisk': '8', 'sort_dir': 'asc', 'sort_key': 'vcpus'}
+    headers = {'x-auth-token': ks_token}
+    try:
+
+        response = requests.get(flavor_url, headers=headers, params=query)
+        response.raise_for_status()
+        flavors = response.json()['flavors']
+        # minimum number of CPUs from first result (they are sorted)
+        min_cpu = flavors[0]['vcpus']
+        # take the first one after ordering by RAM
+        return sorted(filter(lambda x: x['vcpus'] == min_cpu, flavors),
+                      key=lambda x: x['ram']).pop(0)['id']
+    except (requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch flavor ID: %s' % helpers.errmsg_from_excp(e), 2)
+    except (AssertionError, IndexError, AttributeError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch flavor ID: %s' % str(e), 2)
+
+
 def main():
     class ArgHolder(object):
         pass
@@ -191,49 +213,47 @@ def main():
             # just fail
             helpers.nagios_out('Critical', 'Unable to authenticate against Keystone', 2)
 
+    if argholder.verb:
+        print 'Endpoint: %s' % (argholder.endpoint)
+        print 'Auth token (cut to 64 chars): %.64s' % ks_token
+        print 'Project OPS, ID: %s' % tenant_id
+        print 'Nova: %s' % nova_url
+        print 'Glance: %s' % glance_url
+
+
     if not argholder.image:
         image = get_image_id(glance_url, ks_token, argholder.appdb_img)
     else:
         image = argholder.image
 
+    if argholder.verb:
+        print "Image: %s" % image
+
     if not argholder.flavor:
-        try:
-            flavor = re.search("(\&flavor=)([\w\.\-]*)", argholder.endpoint).group(2)
-        except (AttributeError, IndexError):
-            helpers.nagios_out('Unknown', 'flavor is not specified for image %s' % (image), 3)
+	    flavor_id = get_smaller_flavor_id(nova_url, ks_token)
     else:
-        flavor = argholder.flavor
+        # fetch flavor_id for given flavor (resource)
+        try:
+            headers, payload= {}, {}
+            headers.update({'x-auth-token': ks_token})
+            response = requests.get(nova_url + '/flavors', headers=headers, cert=argholder.cert,
+                                    verify=False, timeout=argholder.timeout)
+            response.raise_for_status()
+
+            flavors = response.json()['flavors']
+            flavor_id = None
+            for f in flavors:
+                if f['name'] == argholder.flavor:
+                    flavor_id = f['id']
+            assert flavor_id is not None
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
+            helpers.nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % helpers.errmsg_from_excp(e), 2)
+        except (AssertionError, IndexError, AttributeError) as e:
+            helpers.nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % str(e), 2)
 
     if argholder.verb:
-        print 'Endpoint:%s' % (argholder.endpoint)
-        print 'Image:%s' % (image)
-        print 'Flavor:%s' % (flavor)
-        print 'Auth token (cut to 64 chars): %.64s' % ks_token
-        print 'Project OPS, ID:%s' % tenant_id
-        print 'Nova: %s' % nova_url
-        print 'Glance: %s' % glance_url
-
-    # fetch flavor_id for given flavor (resource)
-    try:
-        headers, payload= {}, {}
-        headers.update({'x-auth-token': ks_token})
-        response = requests.get(nova_url + '/flavors', headers=headers, cert=argholder.cert,
-                                verify=False, timeout=argholder.timeout)
-        response.raise_for_status()
-
-        flavors = response.json()['flavors']
-        flavor_id = None
-        for f in flavors:
-            if f['name'] == flavor:
-                flavor_id = f['id']
-        assert flavor_id is not None
-        if argholder.verb:
-            print "Flavor %s, ID:%s" % (flavor, flavor_id)
-    except (requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
-        helpers.nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % helpers.errmsg_from_excp(e), 2)
-    except (AssertionError, IndexError, AttributeError) as e:
-        helpers.nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % str(e), 2)
+        print "Flavor ID: %s" % flavor_id
 
     # create server
     try:
