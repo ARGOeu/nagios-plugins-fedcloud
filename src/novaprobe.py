@@ -142,7 +142,7 @@ def main():
             except helpers.AuthenticationException as e:
                 # no more authentication methods to try, fail here
                 print 'Unable to authenticate with VOMS + Keystone V3: %s' % e
-            # finally try with certificate v2
+            # try with certificate v2
             try:
                 ks_token, tenant, last_response = helpers.get_keystone_token_x509_v2(argholder.endpoint,
                                                                                      argholder.cert,
