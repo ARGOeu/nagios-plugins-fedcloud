@@ -122,22 +122,32 @@ def main():
         access_token = access_file.read().rstrip("\n")
         access_file.close()
         try:
-            ks_token, tenant, last_response = helpers.get_keystone_oidc_token(argholder.endpoint,
-                                                                              access_token,
-                                                                              argholder.capath,
-                                                                              argholder.timeout)
+            ks_token, tenant, last_response = helpers.get_keystone_token_oidc_v3(argholder.endpoint,
+                                                                                 access_token,
+                                                                                 argholder.capath,
+                                                                                 argholder.timeout)
             tenant_id, nova_url = get_info_v3(tenant, last_response)
         except helpers.AuthenticationException as e:
             # log the error but don't really fail
             print 'Unable to authenticate with OIDC: %s' % e
     if not ks_token:
         if argholder.cert:
-            # try with certificate
+            # try with certificate v3
             try:
-                ks_token, tenant, last_response = helpers.get_keystone_token(argholder.endpoint,
-                                                                             argholder.cert,
-                                                                             argholder.capath,
-                                                                             argholder.timeout)
+                ks_token, tenant, last_response = helpers.get_keystone_token_x509_v3(argholder.endpoint,
+                                                                                     argholder.cert,
+                                                                                     argholder.capath,
+                                                                                     argholder.timeout)
+                tenant_id, nova_url = get_info_v3(tenant, last_response)
+            except helpers.AuthenticationException as e:
+                # no more authentication methods to try, fail here
+                print 'Unable to authenticate with VOMS + Keystone V3: %s' % e
+            # try with certificate v2
+            try:
+                ks_token, tenant, last_response = helpers.get_keystone_token_x509_v2(argholder.endpoint,
+                                                                                     argholder.cert,
+                                                                                     argholder.capath,
+                                                                                     argholder.timeout)
                 tenant_id, nova_url = get_info_v2(tenant, last_response)
             except helpers.AuthenticationException as e:
                 # no more authentication methods to try, fail here
