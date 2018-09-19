@@ -14,8 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# from pprint import pprint
-
 import argparse, re
 import requests, sys, os, json
 import urlparse
