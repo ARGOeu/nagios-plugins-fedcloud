@@ -228,7 +228,7 @@ def main():
         print "Image: %s" % image
 
     if not argholder.flavor:
-	    flavor_id = get_smaller_flavor_id(nova_url, ks_token)
+        flavor_id = get_smaller_flavor_id(nova_url, ks_token)
     else:
         # fetch flavor_id for given flavor (resource)
         try:

@@ -12,6 +12,10 @@ from OpenSSL.SSL import Error as SSLError
 from OpenSSL.SSL import WantReadError as SSLWantReadError
 from urlparse import urlparse
 
+# If ndg-httpsclient and pyasn1 are installed, requests will try to use SNI
+# enabled urllib3 thus overriding default behaviour that is - certificates are
+# not checked. We want default behaviour as we have our own function for
+# certificate validation - verify_cert() that supports capath argument
 try:
     import urllib3.contrib.pyopenssl
     urllib3.contrib.pyopenssl.extract_from_urllib3()
