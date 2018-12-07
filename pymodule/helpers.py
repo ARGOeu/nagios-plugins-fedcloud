@@ -12,6 +12,12 @@ from OpenSSL.SSL import Error as SSLError
 from OpenSSL.SSL import WantReadError as SSLWantReadError
 from urlparse import urlparse
 
+try:
+    import urllib3.contrib.pyopenssl
+    urllib3.contrib.pyopenssl.extract_from_urllib3()
+except ImportError:
+    pass
+
 strerr = ''
 num_excp_expand = 0
 
