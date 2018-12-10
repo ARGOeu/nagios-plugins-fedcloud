@@ -193,7 +193,7 @@ def main():
                                                                                      argholder.cert,
                                                                                      argholder.capath,
                                                                                      argholder.timeout)
-                tenant_id, nova_url = get_info_v3(tenant, last_response)
+                tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
             except helpers.AuthenticationException as e:
                 # no more authentication methods to try, fail here
                 print 'Unable to authenticate with VOMS + Keystone V3: %s' % e
