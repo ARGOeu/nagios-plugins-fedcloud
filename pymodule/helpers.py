@@ -12,6 +12,17 @@ from OpenSSL.SSL import Error as SSLError
 from OpenSSL.SSL import WantReadError as SSLWantReadError
 from urlparse import urlparse
 
+# If ndg-httpsclient and pyasn1 are installed, requests will try to use SNI
+# enabled urllib3 thus overriding default behaviour that is - certificates are
+# not checked. We want default behaviour as we have our own function for
+# certificate validation - verify_cert() that supports capath argument so we
+# disable using of patched functions in urllib3.
+try:
+    import urllib3.contrib.pyopenssl
+    urllib3.contrib.pyopenssl.extract_from_urllib3()
+except ImportError:
+    pass
+
 strerr = ''
 num_excp_expand = 0
 
@@ -58,7 +69,7 @@ def get_keystone_x509_unscoped_token(parsed_url, suffix, userca, timeout):
     except(KeyError, IndexError) as e:
         raise AuthenticationException('Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e))
     except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-        raise AuthenticationException('Connection error %s - %s' % (parsed_url.netloc+oidc_suffix, errmsg_from_excp(e)))
+        raise AuthenticationException('Connection error %s - %s' % (parsed_url.netloc+token_suffix, errmsg_from_excp(e)))
 
 
 def get_keystone_v3_token(unscoped_token_getter, host, usertoken, capath, timeout):
@@ -143,7 +154,7 @@ def get_keystone_token_x509_v2(host, userca, capath, timeout):
         except(KeyError, IndexError) as e:
             raise AuthenticationException('Could not fetch unscoped keystone token from response: Key not found %s' % errmsg_from_excp(e))
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            raise AuthenticationException('Connection error %s - %s' % (o.netloc+oidc_suffix, errmsg_from_excp(e)))
+            raise AuthenticationException('Connection error %s - %s' % (o.netloc+token_suffix, errmsg_from_excp(e)))
 
         try:
             # use unscoped token to get a list of allowed tenants mapped to
@@ -167,7 +178,7 @@ def get_keystone_token_x509_v2(host, userca, capath, timeout):
         except(KeyError, IndexError) as e:
             raise AuthenticationException('Could not fetch allowed tenants from response: Key not found %s' % errmsg_from_excp(e))
         except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-            raise AuthenticationException('Connection error %s - %s' % (o.scheme+'://'+o.netloc+project_suffix, errmsg_from_excp(e)))
+            raise AuthenticationException('Connection error %s - %s' % (o.scheme+'://'+o.netloc+tenant_suffix, errmsg_from_excp(e)))
 
         try:
             # get scoped token for allowed tenant
