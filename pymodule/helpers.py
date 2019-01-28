@@ -35,7 +35,7 @@ def nagios_out(status, msg, retcode):
 
 
 def get_keystone_oidc_unscoped_token(parsed_url, suffix, token, timeout,
-                                     idp='egi.eu', protocol='oidc'):
+                                     idp='egi.eu', protocol='openid'):
     try:
         auth_url = ('/v3/OS-FEDERATION/identity_providers/%s/protocols/%s/auth'
                     % (idp, protocol))
