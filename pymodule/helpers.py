@@ -34,9 +34,12 @@ def nagios_out(status, msg, retcode):
     sys.exit(retcode)
 
 
-def get_keystone_oidc_unscoped_token(parsed_url, suffix, token, timeout):
+def get_keystone_oidc_unscoped_token(parsed_url, suffix, token, timeout,
+                                     idp='egi.eu', protocol='openid'):
     try:
-        oidc_suffix = suffix + '/v3/OS-FEDERATION/identity_providers/egi.eu/protocols/oidc/auth'
+        auth_url = ('/v3/OS-FEDERATION/identity_providers/%s/protocols/%s/auth'
+                    % (idp, protocol))
+        oidc_suffix = suffix + auth_url
 
         headers = {}
 
@@ -53,9 +56,13 @@ def get_keystone_oidc_unscoped_token(parsed_url, suffix, token, timeout):
         raise AuthenticationException('Connection error %s - %s' % (parsed_url.netloc+oidc_suffix, errmsg_from_excp(e)))
 
 
-def get_keystone_x509_unscoped_token(parsed_url, suffix, userca, timeout):
+def get_keystone_x509_unscoped_token(parsed_url, suffix, userca, timeout,
+                                     idp='egi.eu', protocol='mapped'):
     try:
-        token_suffix = suffix + '/v3/OS-FEDERATION/identity_providers/egi.eu/protocols/mapped/auth'
+
+        auth_url = ('/v3/OS-FEDERATION/identity_providers/%s/protocols/%s/auth'
+                    % (idp, protocol))
+        token_suffix = suffix + auth_url
 
         headers = {}
 
