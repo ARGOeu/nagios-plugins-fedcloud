@@ -4,7 +4,7 @@
 
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
-Version: 0.1.7
+Version: 0.2.0
 Release: 1%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
@@ -37,8 +37,15 @@ rm -rf $RPM_BUILD_ROOT
 %defattr(-,root,root,-)
 %{dir}
 %{python_sitelib}/nagios_plugins_fedcloud
+%if 0%{?el7:1}
+%exclude %{dir}/check_occi_compute_create
+%endif
 
 %changelog
+* Thu Feb 7 2019 Emir Imamagic <eimamagi@srce.hr> - 0.2.0-1%{?dist}
+- Add support for both X509 and OIDC in openstack probe
+- Add support for Keystone V3
+- Add support for using AppDB image in openstack probe
 * Fri Dec 8 2017 Daniel Vrcic <dvrcic@srce.hr> - 0.1.7-1%{?dist}
 - graceful clean-up for OCCI compute probe  
 * Mon Nov 20 2017 Daniel Vrcic <dvrcic@srce.hr> - 0.1.6-1%{?dist}

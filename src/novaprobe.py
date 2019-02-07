@@ -14,10 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#from pprint import pprint
-
 import argparse, re
 import requests, sys, os, json
+import urlparse
 import time
 
 from nagios_plugins_fedcloud import helpers
@@ -33,12 +32,12 @@ def get_info_v3(tenant, last_response):
     try:
        tenant_id = last_response.json()['token']['project']['id']
     except(KeyError, IndexError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch id for tenant %s: Key not found %s' % (tenant, helpers.errmsg_from_excp(e)), 2)
+        helpers.nagios_out('Critical', 'Could not fetch id for tenant %s: %s' % (tenant, helpers.errmsg_from_excp(e)), 2)
 
     try:
         service_catalog = last_response.json()['token']['catalog']
     except(KeyError, IndexError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch service catalog: Key not found %s' % (helpers.errmsg_from_excp(e)), 2)
+        helpers.nagios_out('Critical', 'Could not fetch service catalog: %s' % (helpers.errmsg_from_excp(e)), 2)
 
     try:
         nova_url = None
@@ -47,33 +46,85 @@ def get_info_v3(tenant, last_response):
                 for ep in e['endpoints']:
                     if ep['interface'] == 'public':
                         nova_url = ep['url']
+            if e['type'] == 'image':
+                for ep in e['endpoints']:
+                    if ep['interface'] == 'public':
+                        glance_url = ep['url']
         assert nova_url is not None
+        assert glance_url is not None
     except(KeyError, IndexError, AssertionError) as e:
         helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: Key not found %s' % (helpers.errmsg_from_excp(e)), 2)
 
-    return tenant_id, nova_url
+    return tenant_id, nova_url, glance_url
 
 def get_info_v2(tenant, last_response):
     try:
         tenant_id = last_response.json()['access']['token']['tenant']['id']
     except(KeyError, IndexError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch id for tenant %s: Key not found %s' % (tenant, helpers.errmsg_from_excp(e)), 2)
+        helpers.nagios_out('Critical', 'Could not fetch id for tenant %s: %s' % (tenant, helpers.errmsg_from_excp(e)), 2)
 
     try:
         service_catalog = last_response.json()['access']['serviceCatalog']
     except(KeyError, IndexError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch service catalog: Key not found %s' % (helpers.errmsg_from_excp(e)))
+        helpers.nagios_out('Critical', 'Could not fetch service catalog: %s' % (helpers.errmsg_from_excp(e)))
 
     try:
         nova_url = None
         for e in service_catalog:
             if e['type'] == 'compute':
                 nova_url = e['endpoints'][0]['publicURL']
+            if e['type'] == 'glance':
+                glance_url = e['endpoints'][0]['publicURL']
         assert nova_url is not None
+        assert glance_url is not None
     except(KeyError, IndexError, AssertionError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: Key not found %s' % (helpers.errmsg_from_excp(e)))
+        helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: %s' % (helpers.errmsg_from_excp(e)))
 
     return tenant_id, nova_url
+
+
+def get_image_id(glance_url, ks_token, appdb_id):
+    next_url = 'v2/images'
+    try:
+        # TODO: query for the exact image directly once that info is available in glance
+        # that should remove the need for the loop
+        while next_url:
+            images_url  = urlparse.urljoin(glance_url, next_url)
+            response = requests.get(images_url, headers = {'x-auth-token': ks_token}, verify=False)
+            response.raise_for_status()
+            for img in response.json()['images']:
+                attrs = json.loads(img.get('APPLIANCE_ATTRIBUTES', '{}'))
+                if attrs.get('ad:appid', '') == appdb_id:
+                    return img['id']
+            next_url = response.json().get('next', '')
+    except (requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch image ID: %s' % helpers.errmsg_from_excp(e), 2)
+    except (AssertionError, IndexError, AttributeError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch image ID: %s' % str(e), 2)
+    helpers.nagios_out('Critical', 'Could not find image ID for AppDB image %s' % appdb_id, 2)
+
+
+def get_smaller_flavor_id(nova_url, ks_token):
+    flavor_url = nova_url + '/flavors/detail'
+    # flavors with at least 8GB of disk, sorted by number of cpus
+    query = {'minDisk': '8', 'sort_dir': 'asc', 'sort_key': 'vcpus'}
+    headers = {'x-auth-token': ks_token}
+    try:
+
+        response = requests.get(flavor_url, headers=headers, params=query, verify=False)
+        response.raise_for_status()
+        flavors = response.json()['flavors']
+        # minimum number of CPUs from first result (they are sorted)
+        min_cpu = flavors[0]['vcpus']
+        # take the first one after ordering by RAM
+        return sorted(filter(lambda x: x['vcpus'] == min_cpu, flavors),
+                      key=lambda x: x['ram']).pop(0)['id']
+    except (requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch flavor ID: %s' % helpers.errmsg_from_excp(e), 2)
+    except (AssertionError, IndexError, AttributeError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch flavor ID: %s' % str(e), 2)
 
 
 def main():
@@ -91,6 +142,7 @@ def main():
     parser.add_argument('--access-token', dest='access_token', nargs='?')
     parser.add_argument('-t', dest='timeout', type=int, nargs='?', default=120)
     parser.add_argument('--capath', dest='capath', nargs='?', default='/etc/grid-security/certificates')
+    parser.add_argument('--appdb-image', dest='appdb_img', nargs='?')
 
     parser.parse_args(namespace=argholder)
 
@@ -101,8 +153,8 @@ def main():
     if argholder.cert is None and argholder.access_token is None:
         helpers.nagios_out('Unknown', 'cert or access-token command-line arguments not specified', 3)
 
-    if argholder.cert and argholder.access_token:
-        helpers.nagios_out('Unknown', 'both cert and accesstoken command-line arguments specified', 3)
+    if argholder.image is None and argholder.appdb_img is None:
+        helpers.nagios_out('Unknown', 'image or appdb-image command-line arguments not specified', 3)
 
     if len(argnotspec) > 0:
         msg_error_args = ''
@@ -119,62 +171,90 @@ def main():
         if argholder.access_token and not os.path.isfile(argholder.access_token):
             helpers.nagios_out('Unknown', 'access-token file does not exist', 3)
 
-    if argholder.cert:
-        ks_token, tenant, last_response = helpers.get_keystone_token(argholder.endpoint, argholder.cert, argholder.capath, argholder.timeout)
-        tenant_id, nova_url = get_info_v2(tenant, last_response)
-    else:
+    ks_token = None
+    if argholder.access_token:
         access_file = open(argholder.access_token, 'r')
         access_token = access_file.read().rstrip("\n")
         access_file.close()
-        ks_token, tenant, last_response = helpers.get_keystone_oidc_token(argholder.endpoint, access_token, argholder.capath, argholder.timeout)
-        tenant_id, nova_url = get_info_v3(tenant, last_response)
-
-    # remove once endpoints properly expose images openstackish way
-    if not argholder.image:
         try:
-            image = re.search("(\?image=)([\w\-]*)", argholder.endpoint).group(2)
-        except (AttributeError, IndexError):
-            helpers.nagios_out('Unknown', 'image UUID is not specifed for endpoint', 3)
+            ks_token, tenant, last_response = helpers.get_keystone_token_oidc_v3(argholder.endpoint,
+                                                                                 access_token,
+                                                                                 argholder.capath,
+                                                                                 argholder.timeout)
+            tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
+        except helpers.AuthenticationException as e:
+            # log the error but don't really fail
+            print 'Unable to authenticate with OIDC: %s' % e
+    if not ks_token:
+        if argholder.cert:
+            # try with certificate v3
+            try:
+                ks_token, tenant, last_response = helpers.get_keystone_token_x509_v3(argholder.endpoint,
+                                                                                     argholder.cert,
+                                                                                     argholder.capath,
+                                                                                     argholder.timeout)
+                tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
+            except helpers.AuthenticationException as e:
+                # no more authentication methods to try, fail here
+                print 'Unable to authenticate with VOMS + Keystone V3: %s' % e
+
+    if not ks_token:
+        if argholder.cert:
+            # try with certificate v2
+            try:
+                ks_token, tenant, last_response = helpers.get_keystone_token_x509_v2(argholder.endpoint,
+                                                                                     argholder.cert,
+                                                                                     argholder.capath,
+                                                                                     argholder.timeout)
+                tenant_id, nova_url, glance_url = get_info_v2(tenant, last_response)
+            except helpers.AuthenticationException as e:
+                # no more authentication methods to try, fail here
+                helpers.nagios_out('Critical', str(e), 2)
+        else:
+            # just fail
+            helpers.nagios_out('Critical', 'Unable to authenticate against Keystone', 2)
+
+    if argholder.verb:
+        print 'Endpoint: %s' % (argholder.endpoint)
+        print 'Auth token (cut to 64 chars): %.64s' % ks_token
+        print 'Project OPS, ID: %s' % tenant_id
+        print 'Nova: %s' % nova_url
+        print 'Glance: %s' % glance_url
+
+
+    if not argholder.image:
+        image = get_image_id(glance_url, ks_token, argholder.appdb_img)
     else:
         image = argholder.image
 
+    if argholder.verb:
+        print "Image: %s" % image
+
     if not argholder.flavor:
-        try:
-            flavor = re.search("(\&flavor=)([\w\.\-]*)", argholder.endpoint).group(2)
-        except (AttributeError, IndexError):
-            helpers.nagios_out('Unknown', 'flavor is not specified for image %s' % (image), 3)
+        flavor_id = get_smaller_flavor_id(nova_url, ks_token)
     else:
-        flavor = argholder.flavor
+        # fetch flavor_id for given flavor (resource)
+        try:
+            headers, payload= {}, {}
+            headers.update({'x-auth-token': ks_token})
+            response = requests.get(nova_url + '/flavors', headers=headers, cert=argholder.cert,
+                                    verify=False, timeout=argholder.timeout)
+            response.raise_for_status()
+
+            flavors = response.json()['flavors']
+            flavor_id = None
+            for f in flavors:
+                if f['name'] == argholder.flavor:
+                    flavor_id = f['id']
+            assert flavor_id is not None
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
+            helpers.nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % helpers.errmsg_from_excp(e), 2)
+        except (AssertionError, IndexError, AttributeError) as e:
+            helpers.nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % str(e), 2)
 
     if argholder.verb:
-        print 'Endpoint:%s' % (argholder.endpoint)
-        print 'Image:%s' % (image)
-        print 'Flavor:%s' % (flavor)
-        print 'Auth token (cut to 64 chars): %.64s' % ks_token
-        print 'Tenant OPS, ID:%s' % tenant_id
-        print 'Nova: %s' % nova_url
-
-    # fetch flavor_id for given flavor (resource)
-    try:
-        headers, payload= {}, {}
-        headers.update({'x-auth-token': ks_token})
-        response = requests.get(nova_url + '/flavors', headers=headers, cert=argholder.cert,
-                                verify=False, timeout=argholder.timeout)
-        response.raise_for_status()
-
-        flavors = response.json()['flavors']
-        flavor_id = None
-        for f in flavors:
-            if f['name'] == flavor:
-                flavor_id = f['id']
-        assert flavor_id is not None
-        if argholder.verb:
-            print "Flavor %s, ID:%s" % (flavor, flavor_id)
-    except (requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
-        helpers.nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % helpers.errmsg_from_excp(e), 2)
-    except (AssertionError, IndexError, AttributeError) as e:
-        helpers.nagios_out('Critical', 'could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s' % str(e), 2)
+        print "Flavor ID: %s" % flavor_id
 
     # create server
     try:
