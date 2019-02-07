@@ -4,7 +4,7 @@
 
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
-Version: 0.1.8
+Version: 0.2.0
 Release: 1%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
@@ -42,7 +42,7 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
-* Thu Feb 7 2019 Emir Imamagic <eimamagi@srce.hr> - 0.1.8-1%{?dist}
+* Thu Feb 7 2019 Emir Imamagic <eimamagi@srce.hr> - 0.2.0-1%{?dist}
 - Add support for both X509 and OIDC in openstack probe
 - Add support for Keystone V3
 - Add support for using AppDB image in openstack probe
