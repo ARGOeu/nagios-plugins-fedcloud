@@ -90,7 +90,7 @@ def get_image_id(glance_url, ks_token, appdb_id):
         # that should remove the need for the loop
         while next_url:
             images_url  = urlparse.urljoin(glance_url, next_url)
-            response = requests.get(images_url, headers = {'x-auth-token': ks_token})
+            response = requests.get(images_url, headers = {'x-auth-token': ks_token}, verify=False)
             response.raise_for_status()
             for img in response.json()['images']:
                 attrs = json.loads(img.get('APPLIANCE_ATTRIBUTES', '{}'))
@@ -106,13 +106,13 @@ def get_image_id(glance_url, ks_token, appdb_id):
 
 
 def get_smaller_flavor_id(nova_url, ks_token):
-    flavor_url = urlparse.urljoin(nova_url, 'flavors/detail')
+    flavor_url = nova_url + '/flavors/detail'
     # flavors with at least 8GB of disk, sorted by number of cpus
     query = {'minDisk': '8', 'sort_dir': 'asc', 'sort_key': 'vcpus'}
     headers = {'x-auth-token': ks_token}
     try:
 
-        response = requests.get(flavor_url, headers=headers, params=query)
+        response = requests.get(flavor_url, headers=headers, params=query, verify=False)
         response.raise_for_status()
         flavors = response.json()['flavors']
         # minimum number of CPUs from first result (they are sorted)
