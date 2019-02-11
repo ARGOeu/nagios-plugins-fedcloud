@@ -144,6 +144,8 @@ def main():
     parser.add_argument('-t', dest='timeout', type=int, nargs='?', default=120)
     parser.add_argument('--capath', dest='capath', nargs='?', default='/etc/grid-security/certificates')
     parser.add_argument('--appdb-image', dest='appdb_img', nargs='?')
+    parser.add_argument('--protocol', dest='protocol', default='oidc', nargs='?')
+    parser.add_argument('--identity-provider', dest='identity_provider', default='egi.eu', nargs='?')
 
     parser.parse_args(namespace=argholder)
 
@@ -179,9 +181,11 @@ def main():
         access_file.close()
         try:
             ks_token, tenant, last_response = helpers.get_keystone_token_oidc_v3(argholder.endpoint,
-                                                                                 access_token,
                                                                                  argholder.capath,
-                                                                                 argholder.timeout)
+                                                                                 argholder.timeout,
+                                                                                 token=access_token,
+                                                                                 identity_provider=argholder.identity_provider,
+                                                                                 protocol=argholder.protocol)
             tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
         except helpers.AuthenticationException as e:
             # log the error but don't really fail
@@ -191,9 +195,9 @@ def main():
             # try with certificate v3
             try:
                 ks_token, tenant, last_response = helpers.get_keystone_token_x509_v3(argholder.endpoint,
-                                                                                     argholder.cert,
                                                                                      argholder.capath,
-                                                                                     argholder.timeout)
+                                                                                     argholder.timeout,
+                                                                                     userca=argholder.cert)
                 tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
             except helpers.AuthenticationException as e:
                 # no more authentication methods to try, fail here
@@ -204,9 +208,9 @@ def main():
             # try with certificate v2
             try:
                 ks_token, tenant, last_response = helpers.get_keystone_token_x509_v2(argholder.endpoint,
-                                                                                     argholder.cert,
                                                                                      argholder.capath,
-                                                                                     argholder.timeout)
+                                                                                     argholder.timeout,
+                                                                                     userca=argholder.cert)
                 tenant_id, nova_url, glance_url = get_info_v2(tenant, last_response)
             except helpers.AuthenticationException as e:
                 # no more authentication methods to try, fail here
