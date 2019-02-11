@@ -70,17 +70,18 @@ def get_info_v2(tenant, last_response):
 
     try:
         nova_url = None
+        glance_url = None
         for e in service_catalog:
             if e['type'] == 'compute':
                 nova_url = e['endpoints'][0]['publicURL']
-            if e['type'] == 'glance':
+            if e['type'] == 'image':
                 glance_url = e['endpoints'][0]['publicURL']
         assert nova_url is not None
         assert glance_url is not None
     except(KeyError, IndexError, AssertionError) as e:
         helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: %s' % (helpers.errmsg_from_excp(e)))
 
-    return tenant_id, nova_url
+    return tenant_id, nova_url, glance_url
 
 
 def get_image_id(glance_url, ks_token, appdb_id):
