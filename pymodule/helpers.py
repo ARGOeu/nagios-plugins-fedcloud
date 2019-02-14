@@ -34,11 +34,11 @@ def nagios_out(status, msg, retcode):
     sys.exit(retcode)
 
 
-def get_keystone_oidc_unscoped_token(parsed_url, suffix, token, timeout,
-                                     idp='egi.eu', protocol='openid'):
+def get_keystone_oidc_unscoped_token(parsed_url, suffix, timeout, token,
+                                     identity_provider='egi.eu', protocol='openid'):
     try:
         auth_url = ('/v3/OS-FEDERATION/identity_providers/%s/protocols/%s/auth'
-                    % (idp, protocol))
+                    % (identity_provider, protocol))
         oidc_suffix = suffix + auth_url
 
         headers = {}
@@ -56,12 +56,12 @@ def get_keystone_oidc_unscoped_token(parsed_url, suffix, token, timeout,
         raise AuthenticationException('Connection error %s - %s' % (parsed_url.netloc+oidc_suffix, errmsg_from_excp(e)))
 
 
-def get_keystone_x509_unscoped_token(parsed_url, suffix, userca, timeout,
-                                     idp='egi.eu', protocol='mapped'):
+def get_keystone_x509_unscoped_token(parsed_url, suffix, timeout, userca,
+                                     identity_provider='egi.eu', protocol='mapped'):
     try:
 
         auth_url = ('/v3/OS-FEDERATION/identity_providers/%s/protocols/%s/auth'
-                    % (idp, protocol))
+                    % (identity_provider, protocol))
         token_suffix = suffix + auth_url
 
         headers = {}
@@ -79,7 +79,7 @@ def get_keystone_x509_unscoped_token(parsed_url, suffix, userca, timeout,
         raise AuthenticationException('Connection error %s - %s' % (parsed_url.netloc+token_suffix, errmsg_from_excp(e)))
 
 
-def get_keystone_v3_token(unscoped_token_getter, host, usertoken, capath, timeout):
+def get_keystone_v3_token(unscoped_token_getter, host, capath, timeout, **kwargs):
     if verify_cert(host, capath, timeout):
         o = urlparse(host)
         if o.scheme != 'https':
@@ -89,7 +89,7 @@ def get_keystone_v3_token(unscoped_token_getter, host, usertoken, capath, timeou
         if suffix.endswith('v2.0') or suffix.endswith('v3'):
             suffix = os.path.dirname(suffix)
 
-        token = unscoped_token_getter(o, suffix, usertoken, timeout)
+        token = unscoped_token_getter(o, suffix, timeout, **kwargs)
 
         try:
             # use unscoped token to get a list of allowed projects mapped to
@@ -132,15 +132,13 @@ def get_keystone_v3_token(unscoped_token_getter, host, usertoken, capath, timeou
 
     return token, project, response
 
+def get_keystone_token_oidc_v3(host, capath, timeout, **kwargs):
+    return get_keystone_v3_token(get_keystone_oidc_unscoped_token, host, capath, timeout, **kwargs)
 
-def get_keystone_token_oidc_v3(host, usertoken, capath, timeout):
-    return get_keystone_v3_token(get_keystone_oidc_unscoped_token, host, usertoken, capath, timeout)
+def get_keystone_token_x509_v3(host, capath, timeout, **kwargs):
+    return get_keystone_v3_token(get_keystone_x509_unscoped_token, host, capath, timeout, **kwargs)
 
-def get_keystone_token_x509_v3(host, userca, capath, timeout):
-    return get_keystone_v3_token(get_keystone_x509_unscoped_token, host, userca, capath, timeout)
-
-
-def get_keystone_token_x509_v2(host, userca, capath, timeout):
+def get_keystone_token_x509_v2(host, capath, timeout, userca=None):
     if verify_cert(host, capath, timeout):
         o = urlparse(host)
         if o.scheme != 'https':
