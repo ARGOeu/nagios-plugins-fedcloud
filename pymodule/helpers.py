@@ -6,17 +6,15 @@ import requests
 import json
 from time import sleep
 
-from OpenSSL.SSL import TLSv1_METHOD, Context, Connection
-from OpenSSL.SSL import VERIFY_PEER
-from OpenSSL.SSL import Error as SSLError
-from OpenSSL.SSL import WantReadError as SSLWantReadError
 from urlparse import urlparse
 
 strerr = ''
 num_excp_expand = 0
 
+
 class AuthenticationException(Exception):
     pass
+
 
 def nagios_out(status, msg, retcode):
     sys.stdout.write(status+": "+msg+"\n")
@@ -123,8 +121,10 @@ def get_keystone_v3_token(unscoped_token_getter, host, timeout, **kwargs):
 def get_keystone_token_oidc_v3(host, timeout, **kwargs):
     return get_keystone_v3_token(get_keystone_oidc_unscoped_token, host, timeout, **kwargs)
 
+
 def get_keystone_token_x509_v3(host, timeout, **kwargs):
     return get_keystone_v3_token(get_keystone_x509_unscoped_token, host, timeout, **kwargs)
+
 
 def get_keystone_token_x509_v2(host, timeout, userca=None):
     o = urlparse(host)
@@ -186,6 +186,7 @@ def get_keystone_token_x509_v2(host, timeout, userca=None):
         raise AuthenticationException('Connection error %s - %s' % (o.scheme+'://'+o.netloc+token_suffix, errmsg_from_excp(e)))
 
     return token, tenant, response
+
 
 def errmsg_from_excp(e, level=5):
     global strerr, num_excp_expand
