@@ -14,7 +14,7 @@ BuildArch: noarch
 Requires: python >= 2.6
 Requires: python-argparse
 Requires: python-requests
-Requires: pyOpenSSL
+Requires: python2-ndg_httpsclient
 %description
 
 %prep
