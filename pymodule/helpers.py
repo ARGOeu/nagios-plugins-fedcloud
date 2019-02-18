@@ -12,17 +12,6 @@ from OpenSSL.SSL import Error as SSLError
 from OpenSSL.SSL import WantReadError as SSLWantReadError
 from urlparse import urlparse
 
-# If ndg-httpsclient and pyasn1 are installed, requests will try to use SNI
-# enabled urllib3 thus overriding default behaviour that is - certificates are
-# not checked. We want default behaviour as we have our own function for
-# certificate validation - verify_cert() that supports capath argument so we
-# disable using of patched functions in urllib3.
-# try:
-#     import urllib3.contrib.pyopenssl
-#     urllib3.contrib.pyopenssl.extract_from_urllib3()
-# except ImportError:
-#     pass
-
 strerr = ''
 num_excp_expand = 0
 
@@ -216,70 +205,3 @@ def errmsg_from_excp(e, level=5):
     elif isinstance(e, str):
         if num_excp_expand <= level:
             strerr += e + ' '
-
-def verify_cert(host, capath, timeout, cncheck=True):
-    server_ctx = Context(TLSv1_METHOD)
-    server_cert_chain = []
-    server_ctx.load_verify_locations(None, capath)
-
-    host = re.split("/*", host)[1]
-    if ':' in host:
-        host = host.split(':')
-        server = host[0]
-        port = int(host[1] if not '?' in host[1] else host[1].split('?')[0])
-    else:
-        server = host
-        port = 443
-
-    def verify_cb(conn, cert, errnum, depth, ok):
-        server_cert_chain.append(cert)
-        return ok
-    server_ctx.set_verify(VERIFY_PEER, verify_cb)
-
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setblocking(1)
-        sock.settimeout(timeout)
-        sock.connect((server, port))
-    except (socket.error, socket.timeout) as e:
-        nagios_out('Critical', 'Connection error %s - %s' % (server + ':' + str(port),
-                                                            errmsg_from_excp(e)),
-                                                            2)
-
-    server_conn = Connection(server_ctx, sock)
-    server_conn.set_connect_state()
-
-    def iosock_try():
-        ok = True
-        try:
-            server_conn.do_handshake()
-            sleep(0.5)
-        except SSLWantReadError as e:
-            ok = False
-            pass
-        except Exception as e:
-            raise e
-        return ok
-
-    try:
-        while True:
-            if iosock_try():
-                break
-
-        if cncheck:
-            server_subject = server_cert_chain[-1].get_subject()
-            if server != server_subject.CN:
-                nagios_out('Critical', 'Server certificate CN %s does not match %s' % (server_subject.CN, server), 2)
-
-    except SSLError as e:
-        if 'sslv3 alert handshake failure' in errmsg_from_excp(e):
-            pass
-        else:
-            nagios_out('Critical', 'Connection error %s - %s' % (server + ':' + str(port),
-                                                                errmsg_from_excp(e, level=1)),
-                                                                2)
-    finally:
-        server_conn.shutdown()
-        server_conn.close()
-
-    return True
