@@ -91,7 +91,7 @@ def get_image_id(glance_url, ks_token, appdb_id):
         # that should remove the need for the loop
         while next_url:
             images_url  = urlparse.urljoin(glance_url, next_url)
-            response = requests.get(images_url, headers = {'x-auth-token': ks_token}, verify=False)
+            response = requests.get(images_url, headers = {'x-auth-token': ks_token}, verify=True)
             response.raise_for_status()
             for img in response.json()['images']:
                 attrs = json.loads(img.get('APPLIANCE_ATTRIBUTES', '{}'))
@@ -113,7 +113,7 @@ def get_smaller_flavor_id(nova_url, ks_token):
     headers = {'x-auth-token': ks_token}
     try:
 
-        response = requests.get(flavor_url, headers=headers, params=query, verify=False)
+        response = requests.get(flavor_url, headers=headers, params=query, verify=True)
         response.raise_for_status()
         flavors = response.json()['flavors']
         # minimum number of CPUs from first result (they are sorted)
@@ -142,14 +142,13 @@ def main():
     parser.add_argument('--cert', dest='cert', nargs='?')
     parser.add_argument('--access-token', dest='access_token', nargs='?')
     parser.add_argument('-t', dest='timeout', type=int, nargs='?', default=120)
-    parser.add_argument('--capath', dest='capath', nargs='?', default='/etc/grid-security/certificates')
     parser.add_argument('--appdb-image', dest='appdb_img', nargs='?')
     parser.add_argument('--protocol', dest='protocol', default='oidc', nargs='?')
     parser.add_argument('--identity-provider', dest='identity_provider', default='egi.eu', nargs='?')
 
     parser.parse_args(namespace=argholder)
 
-    for arg in ['endpoint', 'capath', 'timeout']:
+    for arg in ['endpoint', 'timeout']:
         if eval('argholder.'+arg) == None:
             argnotspec.append(arg)
 
@@ -166,8 +165,7 @@ def main():
         helpers.nagios_out('Unknown', 'command-line arguments not specified, '+msg_error_args, 3)
     else:
         if not argholder.endpoint.startswith("http") \
-                or not type(argholder.timeout) == int \
-                or not os.path.isdir(argholder.capath):
+                or not type(argholder.timeout) == int:
             helpers.nagios_out('Unknown', 'command-line arguments are not correct', 3)
         if argholder.cert and not os.path.isfile(argholder.cert):
             helpers.nagios_out('Unknown', 'cert file does not exist', 3)
@@ -181,7 +179,6 @@ def main():
         access_file.close()
         try:
             ks_token, tenant, last_response = helpers.get_keystone_token_oidc_v3(argholder.endpoint,
-                                                                                 argholder.capath,
                                                                                  argholder.timeout,
                                                                                  token=access_token,
                                                                                  identity_provider=argholder.identity_provider,
@@ -195,7 +192,6 @@ def main():
             # try with certificate v3
             try:
                 ks_token, tenant, last_response = helpers.get_keystone_token_x509_v3(argholder.endpoint,
-                                                                                     argholder.capath,
                                                                                      argholder.timeout,
                                                                                      userca=argholder.cert)
                 tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
@@ -208,7 +204,6 @@ def main():
             # try with certificate v2
             try:
                 ks_token, tenant, last_response = helpers.get_keystone_token_x509_v2(argholder.endpoint,
-                                                                                     argholder.capath,
                                                                                      argholder.timeout,
                                                                                      userca=argholder.cert)
                 tenant_id, nova_url, glance_url = get_info_v2(tenant, last_response)
@@ -243,7 +238,7 @@ def main():
             headers, payload= {}, {}
             headers.update({'x-auth-token': ks_token})
             response = requests.get(nova_url + '/flavors', headers=headers, cert=argholder.cert,
-                                    verify=False, timeout=argholder.timeout)
+                                    verify=True, timeout=argholder.timeout)
             response.raise_for_status()
 
             flavors = response.json()['flavors']
@@ -271,7 +266,7 @@ def main():
                               'flavorRef': flavor_id}}
         response = requests.post(nova_url + '/servers', headers=headers,
                                     data=json.dumps(payload),
-                                    cert=argholder.cert, verify=False,
+                                    cert=argholder.cert, verify=True,
                                     timeout=argholder.timeout)
         response.raise_for_status()
         server_id = response.json()['server']['id']
@@ -296,7 +291,7 @@ def main():
             headers.update({'x-auth-token': ks_token})
             response = requests.get(nova_url + '/servers/%s' % (server_id),
                                     headers=headers, cert=argholder.cert,
-                                    verify=False,
+                                    verify=True,
                                     timeout=argholder.timeout)
             response.raise_for_status()
             status = response.json()['server']['status']
@@ -336,7 +331,7 @@ def main():
             headers.update({'x-auth-token': ks_token})
             response = requests.delete(nova_url + '/servers/%s' %
                                         (server_id), headers=headers,
-                                        cert=argholder.cert, verify=False,
+                                        cert=argholder.cert, verify=True,
                                         timeout=argholder.timeout)
             if argholder.verb:
                 print "Trying to delete server=%s" % server_id
@@ -359,7 +354,7 @@ def main():
                 headers.update({'x-auth-token': ks_token})
 
                 response = requests.get(nova_url + '/servers', headers=headers,
-                                        cert=argholder.cert, verify=False,
+                                        cert=argholder.cert, verify=True,
                                         timeout=argholder.timeout)
                 servfound = False
                 for s in response.json()['servers']:
@@ -367,7 +362,7 @@ def main():
                         servfound = True
                         response = requests.get(nova_url + '/servers/%s' %
                                                 (server_id), headers=headers,
-                                                cert=argholder.cert, verify=False,
+                                                cert=argholder.cert, verify=True,
                                                 timeout=argholder.timeout)
                         response.raise_for_status()
                         status = response.json()['server']['status']
