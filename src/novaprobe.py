@@ -84,14 +84,14 @@ def get_info_v2(tenant, last_response):
     return tenant_id, nova_url, glance_url
 
 
-def get_image_id(glance_url, ks_token, appdb_id):
+def get_image_id(glance_url, ks_token, appdb_id, capath):
     next_url = 'v2/images'
     try:
         # TODO: query for the exact image directly once that info is available in glance
         # that should remove the need for the loop
         while next_url:
             images_url  = urlparse.urljoin(glance_url, next_url)
-            response = requests.get(images_url, headers = {'x-auth-token': ks_token}, verify=False)
+            response = requests.get(images_url, headers = {'x-auth-token': ks_token}, verify=capath)
             response.raise_for_status()
             for img in response.json()['images']:
                 attrs = json.loads(img.get('APPLIANCE_ATTRIBUTES', '{}'))
@@ -106,14 +106,14 @@ def get_image_id(glance_url, ks_token, appdb_id):
     helpers.nagios_out('Critical', 'Could not find image ID for AppDB image %s' % appdb_id, 2)
 
 
-def get_smaller_flavor_id(nova_url, ks_token):
+def get_smaller_flavor_id(nova_url, ks_token, capath):
     flavor_url = nova_url + '/flavors/detail'
     # flavors with at least 8GB of disk, sorted by number of cpus
     query = {'minDisk': '8', 'sort_dir': 'asc', 'sort_key': 'vcpus'}
     headers = {'x-auth-token': ks_token}
     try:
 
-        response = requests.get(flavor_url, headers=headers, params=query, verify=False)
+        response = requests.get(flavor_url, headers=headers, params=query, verify=capath)
         response.raise_for_status()
         flavors = response.json()['flavors']
         # minimum number of CPUs from first result (they are sorted)
@@ -167,7 +167,7 @@ def main():
     else:
         if not argholder.endpoint.startswith("http") \
                 or not type(argholder.timeout) == int \
-                or not os.path.isdir(argholder.capath):
+                or not os.path.isfile(argholder.capath):
             helpers.nagios_out('Unknown', 'command-line arguments are not correct', 3)
         if argholder.cert and not os.path.isfile(argholder.cert):
             helpers.nagios_out('Unknown', 'cert file does not exist', 3)
@@ -228,7 +228,7 @@ def main():
 
 
     if not argholder.image:
-        image = get_image_id(glance_url, ks_token, argholder.appdb_img)
+        image = get_image_id(glance_url, ks_token, argholder.appdb_img, capath)
     else:
         image = argholder.image
 
@@ -236,14 +236,14 @@ def main():
         print "Image: %s" % image
 
     if not argholder.flavor:
-        flavor_id = get_smaller_flavor_id(nova_url, ks_token)
+        flavor_id = get_smaller_flavor_id(nova_url, ks_token, capath)
     else:
         # fetch flavor_id for given flavor (resource)
         try:
             headers, payload= {}, {}
             headers.update({'x-auth-token': ks_token})
             response = requests.get(nova_url + '/flavors', headers=headers, cert=argholder.cert,
-                                    verify=False, timeout=argholder.timeout)
+                                    verify=capath, timeout=argholder.timeout)
             response.raise_for_status()
 
             flavors = response.json()['flavors']
@@ -271,7 +271,7 @@ def main():
                               'flavorRef': flavor_id}}
         response = requests.post(nova_url + '/servers', headers=headers,
                                     data=json.dumps(payload),
-                                    cert=argholder.cert, verify=False,
+                                    cert=argholder.cert, verify=capath,
                                     timeout=argholder.timeout)
         response.raise_for_status()
         server_id = response.json()['server']['id']
@@ -296,7 +296,7 @@ def main():
             headers.update({'x-auth-token': ks_token})
             response = requests.get(nova_url + '/servers/%s' % (server_id),
                                     headers=headers, cert=argholder.cert,
-                                    verify=False,
+                                    verify=capath,
                                     timeout=argholder.timeout)
             response.raise_for_status()
             status = response.json()['server']['status']
@@ -336,7 +336,7 @@ def main():
             headers.update({'x-auth-token': ks_token})
             response = requests.delete(nova_url + '/servers/%s' %
                                         (server_id), headers=headers,
-                                        cert=argholder.cert, verify=False,
+                                        cert=argholder.cert, verify=capath,
                                         timeout=argholder.timeout)
             if argholder.verb:
                 print "Trying to delete server=%s" % server_id
@@ -359,7 +359,7 @@ def main():
                 headers.update({'x-auth-token': ks_token})
 
                 response = requests.get(nova_url + '/servers', headers=headers,
-                                        cert=argholder.cert, verify=False,
+                                        cert=argholder.cert, verify=capath,
                                         timeout=argholder.timeout)
                 servfound = False
                 for s in response.json()['servers']:
@@ -367,7 +367,7 @@ def main():
                         servfound = True
                         response = requests.get(nova_url + '/servers/%s' %
                                                 (server_id), headers=headers,
-                                                cert=argholder.cert, verify=False,
+                                                cert=argholder.cert, verify=capath,
                                                 timeout=argholder.timeout)
                         response.raise_for_status()
                         status = response.json()['server']['status']
