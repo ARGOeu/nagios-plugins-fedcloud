@@ -143,7 +143,7 @@ def main():
     parser.add_argument('--access-token', dest='access_token', nargs='?')
     parser.add_argument('-t', dest='timeout', type=int, nargs='?', default=120)
     parser.add_argument('--appdb-image', dest='appdb_img', nargs='?')
-    parser.add_argument('--protocol', dest='protocol', default='oidc', nargs='?')
+    parser.add_argument('--protocol', dest='protocol', default='openid', nargs='?')
     parser.add_argument('--identity-provider', dest='identity_provider', default='egi.eu', nargs='?')
 
     parser.parse_args(namespace=argholder)
