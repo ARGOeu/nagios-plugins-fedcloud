@@ -184,9 +184,11 @@ def main():
                                                                                  identity_provider=argholder.identity_provider,
                                                                                  protocol=argholder.protocol)
             tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
+            if argholder.verb:
+                print 'Authenticated with OpenID Connect'
         except helpers.AuthenticationException as e:
-            # log the error but don't really fail
-            print 'Unable to authenticate with OIDC: %s' % e
+            # just go ahead
+            pass
     if not ks_token:
         if argholder.cert:
             # try with certificate v3
@@ -195,10 +197,10 @@ def main():
                                                                                      argholder.timeout,
                                                                                      userca=argholder.cert)
                 tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
+                if argholder.verb:
+                    print 'Authenticated with VOMS (Keystone V3)'
             except helpers.AuthenticationException as e:
-                # no more authentication methods to try, fail here
-                print 'Unable to authenticate with VOMS + Keystone V3: %s' % e
-
+                pass
     if not ks_token:
         if argholder.cert:
             # try with certificate v2
@@ -207,9 +209,11 @@ def main():
                                                                                      argholder.timeout,
                                                                                      userca=argholder.cert)
                 tenant_id, nova_url, glance_url = get_info_v2(tenant, last_response)
+                if argholder.verb:
+                    print 'Authenticated with VOMS (Keystone V2)'
             except helpers.AuthenticationException as e:
                 # no more authentication methods to try, fail here
-                helpers.nagios_out('Critical', str(e), 2)
+                helpers.nagios_out('Critical', 'Unable to authenticate against keystone', 2)
         else:
             # just fail
             helpers.nagios_out('Critical', 'Unable to authenticate against Keystone', 2)
