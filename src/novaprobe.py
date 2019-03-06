@@ -256,14 +256,40 @@ def main():
     if argholder.verb:
         print "Flavor ID: %s" % flavor_id
 
+    network_id = None
+    try:
+        headers, payload= {}, {}
+        headers = {'content-type': 'application/json', 'accept': 'application/json'}
+        headers.update({'x-auth-token': ks_token})
+        response = requests.get(neutron_url + '/v2.0/networks', headers=headers,
+                                cert=argholder.cert, verify=True,
+                                timeout=argholder.timeout)
+        response.raise_for_status()
+        for network in response.json()['networks']:
+            # assume first available and active network is ok
+            if network['status'] == 'ACTIVE':
+                network_id = network['id']
+                break
+        else:
+            helpers.nagios_out('Critical', 'Could not find a network for the VM', 2)
+    except (requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout, requests.exceptions.HTTPError,
+            AssertionError, IndexError, AttributeError) as e:
+        helpers.nagios_out('Critical', 'Could not get network id: %s' % helpers.errmsg_from_excp(e), 2)
+
     # create server
     try:
         headers, payload= {}, {}
         headers = {'content-type': 'application/json', 'accept': 'application/json'}
         headers.update({'x-auth-token': ks_token})
-        payload = {'server': {'name': SERVER_NAME,
-                              'imageRef': image,
-                              'flavorRef': flavor_id}}
+        payload = {
+            'server': {
+                'name': SERVER_NAME,
+                'imageRef': image,
+                'flavorRef': flavor_id,
+                'networks': [{'uuid': network_id}]
+            }
+        }
         response = requests.post(nova_url + '/servers', headers=headers,
                                     data=json.dumps(payload),
                                     cert=argholder.cert, verify=True,
