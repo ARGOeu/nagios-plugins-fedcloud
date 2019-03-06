@@ -181,7 +181,8 @@ def main():
                 print 'Authenticated with OpenID Connect'
         except helpers.AuthenticationException as e:
             # just go ahead
-            pass
+            if argholder.verb:
+                print "Authentication with OpenID Connect failed"
     if not ks_token:
         if argholder.cert:
             # try with certificate v3
@@ -193,7 +194,8 @@ def main():
                 if argholder.verb:
                     print 'Authenticated with VOMS (Keystone V3)'
             except helpers.AuthenticationException as e:
-                pass
+                if argholder.verb:
+                    print "Authentication with VOMS (Keystone V3) failed"
     if not ks_token:
         if argholder.cert:
             # try with certificate v2
