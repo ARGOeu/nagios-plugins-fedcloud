@@ -39,23 +39,19 @@ def get_info_v3(tenant, last_response):
     except(KeyError, IndexError) as e:
         helpers.nagios_out('Critical', 'Could not fetch service catalog: %s' % (helpers.errmsg_from_excp(e)), 2)
 
-    try:
-        nova_url = None
-        for e in service_catalog:
-            if e['type'] == 'compute':
-                for ep in e['endpoints']:
-                    if ep['interface'] == 'public':
-                        nova_url = ep['url']
-            if e['type'] == 'image':
-                for ep in e['endpoints']:
-                    if ep['interface'] == 'public':
-                        glance_url = ep['url']
-        assert nova_url is not None
-        assert glance_url is not None
-    except(KeyError, IndexError, AssertionError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: Key not found %s' % (helpers.errmsg_from_excp(e)), 2)
+    r = dict(compute=None, image=None, network=None)
 
-    return tenant_id, nova_url, glance_url
+    try:
+        for e in service_catalog:
+            if e['type'] in r:
+                for ep in e['endpoints']:
+                    if ep['interface'] == 'public':
+                        r[e['type']] = ep['url']
+        assert all(r.values())
+    except(KeyError, IndexError, AssertionError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch service URL: %s' % (helpers.errmsg_from_excp(e)), 2)
+
+    return tenant_id, r['compute'], r['image'], r['network']
 
 def get_info_v2(tenant, last_response):
     try:
@@ -68,20 +64,17 @@ def get_info_v2(tenant, last_response):
     except(KeyError, IndexError) as e:
         helpers.nagios_out('Critical', 'Could not fetch service catalog: %s' % (helpers.errmsg_from_excp(e)))
 
-    try:
-        nova_url = None
-        glance_url = None
-        for e in service_catalog:
-            if e['type'] == 'compute':
-                nova_url = e['endpoints'][0]['publicURL']
-            if e['type'] == 'image':
-                glance_url = e['endpoints'][0]['publicURL']
-        assert nova_url is not None
-        assert glance_url is not None
-    except(KeyError, IndexError, AssertionError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: %s' % (helpers.errmsg_from_excp(e)))
+    r = dict(compute=None, image=None, network=None)
 
-    return tenant_id, nova_url, glance_url
+    try:
+        for e in service_catalog:
+            if e['type'] in r:
+                r[e['type']] = e['endpoints'][0]['publicURL']
+        assert all(r.values())
+    except(KeyError, IndexError, AssertionError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch service URL: %s' % (helpers.errmsg_from_excp(e)))
+
+    return tenant_id, r['compute'], r['image'], r['network']
 
 
 def get_image_id(glance_url, ks_token, appdb_id):
@@ -183,10 +176,13 @@ def main():
                                                                                  token=access_token,
                                                                                  identity_provider=argholder.identity_provider,
                                                                                  protocol=argholder.protocol)
-            tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
+            tenant_id, nova_url, glance_url, neutron_url = get_info_v3(tenant, last_response)
+            if argholder.verb:
+                print 'Authenticated with OpenID Connect'
         except helpers.AuthenticationException as e:
-            # log the error but don't really fail
-            print 'Unable to authenticate with OIDC: %s' % e
+            # just go ahead
+            if argholder.verb:
+                print "Authentication with OpenID Connect failed"
     if not ks_token:
         if argholder.cert:
             # try with certificate v3
@@ -194,11 +190,12 @@ def main():
                 ks_token, tenant, last_response = helpers.get_keystone_token_x509_v3(argholder.endpoint,
                                                                                      argholder.timeout,
                                                                                      userca=argholder.cert)
-                tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
+                tenant_id, nova_url, glance_url, neutron_url = get_info_v3(tenant, last_response)
+                if argholder.verb:
+                    print 'Authenticated with VOMS (Keystone V3)'
             except helpers.AuthenticationException as e:
-                # no more authentication methods to try, fail here
-                print 'Unable to authenticate with VOMS + Keystone V3: %s' % e
-
+                if argholder.verb:
+                    print "Authentication with VOMS (Keystone V3) failed"
     if not ks_token:
         if argholder.cert:
             # try with certificate v2
@@ -206,10 +203,12 @@ def main():
                 ks_token, tenant, last_response = helpers.get_keystone_token_x509_v2(argholder.endpoint,
                                                                                      argholder.timeout,
                                                                                      userca=argholder.cert)
-                tenant_id, nova_url, glance_url = get_info_v2(tenant, last_response)
+                tenant_id, nova_url, glance_url, neutron_url = get_info_v2(tenant, last_response)
+                if argholder.verb:
+                    print 'Authenticated with VOMS (Keystone V2)'
             except helpers.AuthenticationException as e:
                 # no more authentication methods to try, fail here
-                helpers.nagios_out('Critical', str(e), 2)
+                helpers.nagios_out('Critical', 'Unable to authenticate against keystone', 2)
         else:
             # just fail
             helpers.nagios_out('Critical', 'Unable to authenticate against Keystone', 2)
@@ -220,6 +219,7 @@ def main():
         print 'Project OPS, ID: %s' % tenant_id
         print 'Nova: %s' % nova_url
         print 'Glance: %s' % glance_url
+        print 'Neutron: %s' % neutron_url
 
 
     if not argholder.image:
@@ -256,14 +256,40 @@ def main():
     if argholder.verb:
         print "Flavor ID: %s" % flavor_id
 
+    network_id = None
+    try:
+        headers, payload= {}, {}
+        headers = {'content-type': 'application/json', 'accept': 'application/json'}
+        headers.update({'x-auth-token': ks_token})
+        response = requests.get(neutron_url + '/v2.0/networks', headers=headers,
+                                cert=argholder.cert, verify=True,
+                                timeout=argholder.timeout)
+        response.raise_for_status()
+        for network in response.json()['networks']:
+            # assume first available and active network is ok
+            if network['status'] == 'ACTIVE':
+                network_id = network['id']
+                break
+        else:
+            helpers.nagios_out('Critical', 'Could not find a network for the VM', 2)
+    except (requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout, requests.exceptions.HTTPError,
+            AssertionError, IndexError, AttributeError) as e:
+        helpers.nagios_out('Critical', 'Could not get network id: %s' % helpers.errmsg_from_excp(e), 2)
+
     # create server
     try:
         headers, payload= {}, {}
         headers = {'content-type': 'application/json', 'accept': 'application/json'}
         headers.update({'x-auth-token': ks_token})
-        payload = {'server': {'name': SERVER_NAME,
-                              'imageRef': image,
-                              'flavorRef': flavor_id}}
+        payload = {
+            'server': {
+                'name': SERVER_NAME,
+                'imageRef': image,
+                'flavorRef': flavor_id,
+                'networks': [{'uuid': network_id}]
+            }
+        }
         response = requests.post(nova_url + '/servers', headers=headers,
                                     data=json.dumps(payload),
                                     cert=argholder.cert, verify=True,
