@@ -266,12 +266,18 @@ def main():
                                 timeout=argholder.timeout)
         response.raise_for_status()
         for network in response.json()['networks']:
-            # assume first available and active network is ok
-            if network['status'] == 'ACTIVE':
+            # assume first available active network owned by the tenant is ok
+            if network['status'] == 'ACTIVE' and network['tenant_id'] == tenant_id:
                 network_id = network['id']
                 break
         else:
-            helpers.nagios_out('Critical', 'Could not find a network for the VM', 2)
+            # try without the tenant restriction
+            for network in response.json()['networks']:
+                if network['status'] == 'ACTIVE':
+                    network_id = network['id']
+                    break
+            else:
+                helpers.nagios_out('Critical', 'Could not find a network for the VM', 2)
     except (requests.exceptions.ConnectionError,
             requests.exceptions.Timeout, requests.exceptions.HTTPError,
             AssertionError, IndexError, AttributeError) as e:
