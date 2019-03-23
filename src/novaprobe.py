@@ -266,12 +266,18 @@ def main():
                                 timeout=argholder.timeout)
         response.raise_for_status()
         for network in response.json()['networks']:
-            # assume first available and active network is ok
-            if network['status'] == 'ACTIVE':
+            # assume first available active network owned by the tenant is ok
+            if network['status'] == 'ACTIVE' and network['tenant_id'] == tenant_id:
                 network_id = network['id']
                 break
         else:
-            helpers.nagios_out('Critical', 'Could not find a network for the VM', 2)
+            # try without the tenant restriction
+            for network in response.json()['networks']:
+                if network['status'] == 'ACTIVE':
+                    network_id = network['id']
+                    break
+            else:
+                helpers.nagios_out('Critical', 'Could not find a network for the VM', 2)
     except (requests.exceptions.ConnectionError,
             requests.exceptions.Timeout, requests.exceptions.HTTPError,
             AssertionError, IndexError, AttributeError) as e:
@@ -328,6 +334,9 @@ def main():
                 server_built = True
                 et = time.time()
                 break
+            if 'ERROR' in status:
+                et = time.time()
+                break
             time.sleep(sleepsec)
         except (requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout, requests.exceptions.HTTPError,
@@ -351,88 +360,95 @@ def main():
         if argholder.verb:
             print "\nServer created in %.2f seconds" % (server_createt)
 
-        # server delete
+    # server delete
+    try:
+        headers, payload= {}, {}
+        headers.update({'x-auth-token': ks_token})
+        response = requests.delete(nova_url + '/servers/%s' %
+                                    (server_id), headers=headers,
+                                    cert=argholder.cert, verify=True,
+                                    timeout=argholder.timeout)
+        if argholder.verb:
+            print "Trying to delete server=%s" % server_id
+        response.raise_for_status()
+    except (requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout, requests.exceptions.HTTPError,
+            AssertionError, IndexError, AttributeError) as e:
+        helpers.nagios_out('Critical', 'could not execute DELETE server=%s: %s' % (server_id, helpers.errmsg_from_excp(e)), 2)
+
+    # waiting for DELETED status
+    i = 0
+    server_deleted = False
+    st = time.time()
+    if argholder.verb:
+        sys.stdout.write('Check server status every %ds: ' % (sleepsec))
+    while i < TIMEOUT_CREATE_DELETE/sleepsec:
+        # server status
         try:
             headers, payload= {}, {}
             headers.update({'x-auth-token': ks_token})
-            response = requests.delete(nova_url + '/servers/%s' %
-                                        (server_id), headers=headers,
-                                        cert=argholder.cert, verify=True,
-                                        timeout=argholder.timeout)
-            if argholder.verb:
-                print "Trying to delete server=%s" % server_id
-            response.raise_for_status()
-        except (requests.exceptions.ConnectionError,
-                requests.exceptions.Timeout, requests.exceptions.HTTPError,
-                AssertionError, IndexError, AttributeError) as e:
-            helpers.nagios_out('Critical', 'could not execute DELETE server=%s: %s' % (server_id, helpers.errmsg_from_excp(e)), 2)
 
-        # waiting for DELETED status
-        i = 0
-        server_deleted = False
-        st = time.time()
-        if argholder.verb:
-            sys.stdout.write('Check server status every %ds: ' % (sleepsec))
-        while i < TIMEOUT_CREATE_DELETE/sleepsec:
-            # server status
-            try:
-                headers, payload= {}, {}
-                headers.update({'x-auth-token': ks_token})
-
-                response = requests.get(nova_url + '/servers', headers=headers,
-                                        cert=argholder.cert, verify=True,
-                                        timeout=argholder.timeout)
-                servfound = False
-                for s in response.json()['servers']:
-                    if server_id == s['id']:
-                        servfound = True
-                        response = requests.get(nova_url + '/servers/%s' %
-                                                (server_id), headers=headers,
-                                                cert=argholder.cert, verify=True,
-                                                timeout=argholder.timeout)
-                        response.raise_for_status()
-                        status = response.json()['server']['status']
-                        if argholder.verb:
-                            sys.stdout.write(status+' ')
-                            sys.stdout.flush()
-                        if status.startswith('DELETED'):
-                            server_deleted = True
-                            et = time.time()
-                            break
-
-                if not servfound:
-                    server_deleted = True
-                    et = time.time()
+            response = requests.get(nova_url + '/servers', headers=headers,
+                                    cert=argholder.cert, verify=True,
+                                    timeout=argholder.timeout)
+            servfound = False
+            for s in response.json()['servers']:
+                if server_id == s['id']:
+                    servfound = True
+                    response = requests.get(nova_url + '/servers/%s' %
+                                            (server_id), headers=headers,
+                                            cert=argholder.cert, verify=True,
+                                            timeout=argholder.timeout)
+                    response.raise_for_status()
+                    status = response.json()['server']['status']
                     if argholder.verb:
-                        sys.stdout.write('DELETED')
+                        sys.stdout.write(status+' ')
                         sys.stdout.flush()
-                    break
+                    if status.startswith('DELETED'):
+                        server_deleted = True
+                        et = time.time()
+                        break
 
-                time.sleep(sleepsec)
-            except (requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.HTTPError, AssertionError,
-                    IndexError, AttributeError) as e:
-
+            if not servfound:
                 server_deleted = True
                 et = time.time()
-
                 if argholder.verb:
-                    sys.stdout.write('\n')
-                    sys.stdout.write('Could not fetch server:%s status: %s - server is DELETED' % (server_id,
-                                                                                                    helpers.errmsg_from_excp(e)))
-                    break
-            i += 1
-        else:
+                    sys.stdout.write('DELETED')
+                    sys.stdout.flush()
+                break
+
+            time.sleep(sleepsec)
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError, AssertionError,
+                IndexError, AttributeError) as e:
+
+            server_deleted = True
+            et = time.time()
+
             if argholder.verb:
                 sys.stdout.write('\n')
-            helpers.nagios_out('Critical', 'could not delete server:%s, timeout:%d exceeded' % (server_id, TIMEOUT_CREATE_DELETE), 2)
+                sys.stdout.write('Could not fetch server:%s status: %s - server is DELETED' % (server_id,
+                                                                                                helpers.errmsg_from_excp(e)))
+                break
+        i += 1
+    else:
+        if argholder.verb:
+            sys.stdout.write('\n')
+        helpers.nagios_out('Critical', 'could not delete server:%s, timeout:%d exceeded' % (server_id, TIMEOUT_CREATE_DELETE), 2)
 
     server_deletet = round(et - st, 2)
+    if argholder.verb:
+        print "\nServer=%s deleted in %.2f seconds" % (server_id, server_deletet)
 
     if server_built and server_deleted:
-        if argholder.verb:
-            print "\nServer=%s deleted in %.2f seconds" % (server_id, server_deletet)
         helpers.nagios_out('OK', 'Compute instance=%s created(%.2fs) and destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 0)
+    else if server_built:
+        # Built but not deleted
+        helpers.nagios_out('Critical', 'Compute instance=%s created (%.2fs) but not destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 0)
+    else:
+        # not built but deleted
+        helpers.nagios_out('Critical', 'Compute instance=%s created with error(%.2fs) and destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 0)
+
 
 main()
