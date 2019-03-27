@@ -443,12 +443,12 @@ def main():
 
     if server_built and server_deleted:
         helpers.nagios_out('OK', 'Compute instance=%s created(%.2fs) and destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 0)
-    else if server_built:
-        # Built but not deleted
-        helpers.nagios_out('Critical', 'Compute instance=%s created (%.2fs) but not destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 0)
-    else:
-        # not built but deleted
-        helpers.nagios_out('Critical', 'Compute instance=%s created with error(%.2fs) and destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 0)
-
+    else: 
+        if server_built:
+            # Built but not deleted
+            helpers.nagios_out('Critical', 'Compute instance=%s created (%.2fs) but not destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 0)
+        else:
+            # not built but deleted
+                helpers.nagios_out('Critical', 'Compute instance=%s created with error(%.2fs) and destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 0)
 
 main()
