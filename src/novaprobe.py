@@ -47,7 +47,7 @@ def get_info_v3(tenant, last_response):
                 for ep in e['endpoints']:
                     if ep['interface'] == 'public':
                         r[e['type']] = ep['url']
-        assert all(r.values())
+        assert (r['compute'] and r['image'])
     except(KeyError, IndexError, AssertionError) as e:
         helpers.nagios_out('Critical', 'Could not fetch service URL: %s' % (helpers.errmsg_from_excp(e)), 2)
 
@@ -70,7 +70,7 @@ def get_info_v2(tenant, last_response):
         for e in service_catalog:
             if e['type'] in r:
                 r[e['type']] = e['endpoints'][0]['publicURL']
-        assert all(r.values())
+        assert (r['compute'] and r['image'])
     except(KeyError, IndexError, AssertionError) as e:
         helpers.nagios_out('Critical', 'Could not fetch service URL: %s' % (helpers.errmsg_from_excp(e)))
 
@@ -257,36 +257,40 @@ def main():
         print "Flavor ID: %s" % flavor_id
 
     network_id = None
-    try:
-        headers, payload= {}, {}
-        headers = {'content-type': 'application/json', 'accept': 'application/json'}
-        headers.update({'x-auth-token': ks_token})
-        response = requests.get(neutron_url + '/v2.0/networks', headers=headers,
-                                cert=argholder.cert, verify=True,
-                                timeout=argholder.timeout)
-        response.raise_for_status()
-        for network in response.json()['networks']:
-            # assume first available active network owned by the tenant is ok
-            if network['status'] == 'ACTIVE' and network['tenant_id'] == tenant_id:
-                network_id = network['id']
-                break
-        else:
-            if argholder.verb:
-                print "No tenant-owned netwrok found, trying with any"
-            # try without the tenant restriction
+    if neutron_url:
+        try:
+            headers, payload= {}, {}
+            headers = {'content-type': 'application/json', 'accept': 'application/json'}
+            headers.update({'x-auth-token': ks_token})
+            response = requests.get(neutron_url + '/v2.0/networks', headers=headers,
+                                    cert=argholder.cert, verify=True,
+                                    timeout=argholder.timeout)
+            response.raise_for_status()
             for network in response.json()['networks']:
-                if network['status'] == 'ACTIVE':
+                # assume first available active network owned by the tenant is ok
+                if network['status'] == 'ACTIVE' and network['tenant_id'] == tenant_id:
                     network_id = network['id']
                     break
             else:
-                helpers.nagios_out('Critical', 'Could not find a network for the VM', 2)
-    except (requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout, requests.exceptions.HTTPError,
-            AssertionError, IndexError, AttributeError) as e:
-        helpers.nagios_out('Critical', 'Could not get network id: %s' % helpers.errmsg_from_excp(e), 2)
+                if argholder.verb:
+                    print "No tenant-owned netwrok found, trying with any"
+                # try without the tenant restriction
+                for network in response.json()['networks']:
+                    if network['status'] == 'ACTIVE':
+                        network_id = network['id']
+                        break
+                else:
+                    helpers.nagios_out('Critical', 'Could not find a network for the VM', 2)
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout, requests.exceptions.HTTPError,
+                AssertionError, IndexError, AttributeError) as e:
+            helpers.nagios_out('Critical', 'Could not get network id: %s' % helpers.errmsg_from_excp(e), 2)
 
-    if argholder.verb:
-        print "Network id: %s" % network_id
+        if argholder.verb:
+            print "Network id: %s" % network_id
+    else:
+        if argholder.verb:
+            print "Skipping network discovery as there is no neutron endpoint"
 
     # create server
     try:
@@ -298,9 +302,10 @@ def main():
                 'name': SERVER_NAME,
                 'imageRef': image,
                 'flavorRef': flavor_id,
-                'networks': [{'uuid': network_id}]
             }
         }
+        if network_id:
+            payload['server']['networks'] = [{'uuid': network_id}]
         response = requests.post(nova_url + '/servers', headers=headers,
                                     data=json.dumps(payload),
                                     cert=argholder.cert, verify=True,
