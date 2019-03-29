@@ -270,24 +270,17 @@ def main():
                 # assume first available active network owned by the tenant is ok
                 if network['status'] == 'ACTIVE' and network['tenant_id'] == tenant_id:
                     network_id = network['id']
-                    break
+                    if argholder.verb:
+                        print "Network id: %s" % network_id
+                        break
             else:
                 if argholder.verb:
-                    print "No tenant-owned netwrok found, trying with any"
-                # try without the tenant restriction
-                for network in response.json()['networks']:
-                    if network['status'] == 'ACTIVE':
-                        network_id = network['id']
-                        break
-                else:
-                    helpers.nagios_out('Critical', 'Could not find a network for the VM', 2)
+                    print "No tenant-owned network found, hoping VM creation will still work..."
         except (requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout, requests.exceptions.HTTPError,
                 AssertionError, IndexError, AttributeError) as e:
             helpers.nagios_out('Critical', 'Could not get network id: %s' % helpers.errmsg_from_excp(e), 2)
 
-        if argholder.verb:
-            print "Network id: %s" % network_id
     else:
         if argholder.verb:
             print "Skipping network discovery as there is no neutron endpoint"
