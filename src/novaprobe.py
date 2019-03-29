@@ -271,6 +271,8 @@ def main():
                 network_id = network['id']
                 break
         else:
+            if argholder.verb:
+                print "No tenant-owned netwrok found, trying with any"
             # try without the tenant restriction
             for network in response.json()['networks']:
                 if network['status'] == 'ACTIVE':
@@ -282,6 +284,9 @@ def main():
             requests.exceptions.Timeout, requests.exceptions.HTTPError,
             AssertionError, IndexError, AttributeError) as e:
         helpers.nagios_out('Critical', 'Could not get network id: %s' % helpers.errmsg_from_excp(e), 2)
+
+    if argholder.verb:
+        print "Network id: %s" % network_id
 
     # create server
     try:
@@ -307,6 +312,8 @@ def main():
     except (requests.exceptions.ConnectionError,
             requests.exceptions.Timeout, requests.exceptions.HTTPError,
             AssertionError, IndexError, AttributeError) as e:
+        if argholder.verb:
+            print 'Error from server while creating server: %s' % response.text
         helpers.nagios_out('Critical', 'Could not launch server from image UUID:%s: %s' % (image, helpers.errmsg_from_excp(e)), 2)
 
 
@@ -336,6 +343,8 @@ def main():
                 break
             if 'ERROR' in status:
                 et = time.time()
+                if argholder.verb:
+                    print "Error from nova: %s" % response.json()['server'].get('fault', '')
                 break
             time.sleep(sleepsec)
         except (requests.exceptions.ConnectionError,
@@ -374,6 +383,8 @@ def main():
     except (requests.exceptions.ConnectionError,
             requests.exceptions.Timeout, requests.exceptions.HTTPError,
             AssertionError, IndexError, AttributeError) as e:
+        if argholder.verb:
+            print 'Error from server while deleting server: %s' % response.text
         helpers.nagios_out('Critical', 'could not execute DELETE server=%s: %s' % (server_id, helpers.errmsg_from_excp(e)), 2)
 
     # waiting for DELETED status
