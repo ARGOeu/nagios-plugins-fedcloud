@@ -4,7 +4,7 @@
 
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
-Version: 0.2.0
+Version: 0.3.0
 Release: 1%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
@@ -14,7 +14,7 @@ BuildArch: noarch
 Requires: python >= 2.6
 Requires: python-argparse
 Requires: python-requests
-Requires: pyOpenSSL
+Requires: python2-ndg_httpsclient
 %description
 
 %prep
@@ -42,6 +42,11 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
+* Wed Apr 17 2019 Emir Imamagic <eimamagi@srce.hr> - 0.3.0-1%{?dist}
+- Add network handling
+- Delete VM to avoid leaving resources at sites
+- Remove cdmi probe
+- Enforce certificate validation
 * Thu Feb 7 2019 Emir Imamagic <eimamagi@srce.hr> - 0.2.0-1%{?dist}
 - Add support for both X509 and OIDC in openstack probe
 - Add support for Keystone V3

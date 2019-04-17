@@ -39,23 +39,19 @@ def get_info_v3(tenant, last_response):
     except(KeyError, IndexError) as e:
         helpers.nagios_out('Critical', 'Could not fetch service catalog: %s' % (helpers.errmsg_from_excp(e)), 2)
 
-    try:
-        nova_url = None
-        for e in service_catalog:
-            if e['type'] == 'compute':
-                for ep in e['endpoints']:
-                    if ep['interface'] == 'public':
-                        nova_url = ep['url']
-            if e['type'] == 'image':
-                for ep in e['endpoints']:
-                    if ep['interface'] == 'public':
-                        glance_url = ep['url']
-        assert nova_url is not None
-        assert glance_url is not None
-    except(KeyError, IndexError, AssertionError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: Key not found %s' % (helpers.errmsg_from_excp(e)), 2)
+    r = dict(compute=None, image=None, network=None)
 
-    return tenant_id, nova_url, glance_url
+    try:
+        for e in service_catalog:
+            if e['type'] in r:
+                for ep in e['endpoints']:
+                    if ep['interface'] == 'public':
+                        r[e['type']] = ep['url']
+        assert (r['compute'] and r['image'])
+    except(KeyError, IndexError, AssertionError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch service URL: %s' % (helpers.errmsg_from_excp(e)), 2)
+
+    return tenant_id, r['compute'], r['image'], r['network']
 
 def get_info_v2(tenant, last_response):
     try:
@@ -68,19 +64,17 @@ def get_info_v2(tenant, last_response):
     except(KeyError, IndexError) as e:
         helpers.nagios_out('Critical', 'Could not fetch service catalog: %s' % (helpers.errmsg_from_excp(e)))
 
-    try:
-        nova_url = None
-        for e in service_catalog:
-            if e['type'] == 'compute':
-                nova_url = e['endpoints'][0]['publicURL']
-            if e['type'] == 'glance':
-                glance_url = e['endpoints'][0]['publicURL']
-        assert nova_url is not None
-        assert glance_url is not None
-    except(KeyError, IndexError, AssertionError) as e:
-        helpers.nagios_out('Critical', 'Could not fetch nova compute service URL: %s' % (helpers.errmsg_from_excp(e)))
+    r = dict(compute=None, image=None, network=None)
 
-    return tenant_id, nova_url
+    try:
+        for e in service_catalog:
+            if e['type'] in r:
+                r[e['type']] = e['endpoints'][0]['publicURL']
+        assert (r['compute'] and r['image'])
+    except(KeyError, IndexError, AssertionError) as e:
+        helpers.nagios_out('Critical', 'Could not fetch service URL: %s' % (helpers.errmsg_from_excp(e)))
+
+    return tenant_id, r['compute'], r['image'], r['network']
 
 
 def get_image_id(glance_url, ks_token, appdb_id):
@@ -90,7 +84,7 @@ def get_image_id(glance_url, ks_token, appdb_id):
         # that should remove the need for the loop
         while next_url:
             images_url  = urlparse.urljoin(glance_url, next_url)
-            response = requests.get(images_url, headers = {'x-auth-token': ks_token}, verify=False)
+            response = requests.get(images_url, headers = {'x-auth-token': ks_token}, verify=True)
             response.raise_for_status()
             for img in response.json()['images']:
                 attrs = json.loads(img.get('APPLIANCE_ATTRIBUTES', '{}'))
@@ -112,7 +106,7 @@ def get_smaller_flavor_id(nova_url, ks_token):
     headers = {'x-auth-token': ks_token}
     try:
 
-        response = requests.get(flavor_url, headers=headers, params=query, verify=False)
+        response = requests.get(flavor_url, headers=headers, params=query, verify=True)
         response.raise_for_status()
         flavors = response.json()['flavors']
         # minimum number of CPUs from first result (they are sorted)
@@ -141,12 +135,13 @@ def main():
     parser.add_argument('--cert', dest='cert', nargs='?')
     parser.add_argument('--access-token', dest='access_token', nargs='?')
     parser.add_argument('-t', dest='timeout', type=int, nargs='?', default=120)
-    parser.add_argument('--capath', dest='capath', nargs='?', default='/etc/grid-security/certificates')
     parser.add_argument('--appdb-image', dest='appdb_img', nargs='?')
+    parser.add_argument('--protocol', dest='protocol', default='openid', nargs='?')
+    parser.add_argument('--identity-provider', dest='identity_provider', default='egi.eu', nargs='?')
 
     parser.parse_args(namespace=argholder)
 
-    for arg in ['endpoint', 'capath', 'timeout']:
+    for arg in ['endpoint', 'timeout']:
         if eval('argholder.'+arg) == None:
             argnotspec.append(arg)
 
@@ -163,8 +158,7 @@ def main():
         helpers.nagios_out('Unknown', 'command-line arguments not specified, '+msg_error_args, 3)
     else:
         if not argholder.endpoint.startswith("http") \
-                or not type(argholder.timeout) == int \
-                or not os.path.isdir(argholder.capath):
+                or not type(argholder.timeout) == int:
             helpers.nagios_out('Unknown', 'command-line arguments are not correct', 3)
         if argholder.cert and not os.path.isfile(argholder.cert):
             helpers.nagios_out('Unknown', 'cert file does not exist', 3)
@@ -178,38 +172,43 @@ def main():
         access_file.close()
         try:
             ks_token, tenant, last_response = helpers.get_keystone_token_oidc_v3(argholder.endpoint,
-                                                                                 access_token,
-                                                                                 argholder.capath,
-                                                                                 argholder.timeout)
-            tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
+                                                                                 argholder.timeout,
+                                                                                 token=access_token,
+                                                                                 identity_provider=argholder.identity_provider,
+                                                                                 protocol=argholder.protocol)
+            tenant_id, nova_url, glance_url, neutron_url = get_info_v3(tenant, last_response)
+            if argholder.verb:
+                print 'Authenticated with OpenID Connect'
         except helpers.AuthenticationException as e:
-            # log the error but don't really fail
-            print 'Unable to authenticate with OIDC: %s' % e
+            # just go ahead
+            if argholder.verb:
+                print "Authentication with OpenID Connect failed"
     if not ks_token:
         if argholder.cert:
             # try with certificate v3
             try:
                 ks_token, tenant, last_response = helpers.get_keystone_token_x509_v3(argholder.endpoint,
-                                                                                     argholder.cert,
-                                                                                     argholder.capath,
-                                                                                     argholder.timeout)
-                tenant_id, nova_url, glance_url = get_info_v3(tenant, last_response)
+                                                                                     argholder.timeout,
+                                                                                     userca=argholder.cert)
+                tenant_id, nova_url, glance_url, neutron_url = get_info_v3(tenant, last_response)
+                if argholder.verb:
+                    print 'Authenticated with VOMS (Keystone V3)'
             except helpers.AuthenticationException as e:
-                # no more authentication methods to try, fail here
-                print 'Unable to authenticate with VOMS + Keystone V3: %s' % e
-
+                if argholder.verb:
+                    print "Authentication with VOMS (Keystone V3) failed"
     if not ks_token:
         if argholder.cert:
             # try with certificate v2
             try:
                 ks_token, tenant, last_response = helpers.get_keystone_token_x509_v2(argholder.endpoint,
-                                                                                     argholder.cert,
-                                                                                     argholder.capath,
-                                                                                     argholder.timeout)
-                tenant_id, nova_url, glance_url = get_info_v2(tenant, last_response)
+                                                                                     argholder.timeout,
+                                                                                     userca=argholder.cert)
+                tenant_id, nova_url, glance_url, neutron_url = get_info_v2(tenant, last_response)
+                if argholder.verb:
+                    print 'Authenticated with VOMS (Keystone V2)'
             except helpers.AuthenticationException as e:
                 # no more authentication methods to try, fail here
-                helpers.nagios_out('Critical', str(e), 2)
+                helpers.nagios_out('Critical', 'Unable to authenticate against keystone', 2)
         else:
             # just fail
             helpers.nagios_out('Critical', 'Unable to authenticate against Keystone', 2)
@@ -220,6 +219,7 @@ def main():
         print 'Project OPS, ID: %s' % tenant_id
         print 'Nova: %s' % nova_url
         print 'Glance: %s' % glance_url
+        print 'Neutron: %s' % neutron_url
 
 
     if not argholder.image:
@@ -238,7 +238,7 @@ def main():
             headers, payload= {}, {}
             headers.update({'x-auth-token': ks_token})
             response = requests.get(nova_url + '/flavors', headers=headers, cert=argholder.cert,
-                                    verify=False, timeout=argholder.timeout)
+                                    verify=True, timeout=argholder.timeout)
             response.raise_for_status()
 
             flavors = response.json()['flavors']
@@ -256,17 +256,52 @@ def main():
     if argholder.verb:
         print "Flavor ID: %s" % flavor_id
 
+    network_id = None
+    if neutron_url:
+        try:
+            headers, payload= {}, {}
+            headers = {'content-type': 'application/json', 'accept': 'application/json'}
+            headers.update({'x-auth-token': ks_token})
+            response = requests.get(neutron_url + '/v2.0/networks', headers=headers,
+                                    cert=argholder.cert, verify=True,
+                                    timeout=argholder.timeout)
+            response.raise_for_status()
+            for network in response.json()['networks']:
+                # assume first available active network owned by the tenant is ok
+                if network['status'] == 'ACTIVE' and network['tenant_id'] == tenant_id:
+                    network_id = network['id']
+                    if argholder.verb:
+                        print "Network id: %s" % network_id
+                        break
+            else:
+                if argholder.verb:
+                    print "No tenant-owned network found, hoping VM creation will still work..."
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout, requests.exceptions.HTTPError,
+                AssertionError, IndexError, AttributeError) as e:
+            helpers.nagios_out('Critical', 'Could not get network id: %s' % helpers.errmsg_from_excp(e), 2)
+
+    else:
+        if argholder.verb:
+            print "Skipping network discovery as there is no neutron endpoint"
+
     # create server
     try:
         headers, payload= {}, {}
         headers = {'content-type': 'application/json', 'accept': 'application/json'}
         headers.update({'x-auth-token': ks_token})
-        payload = {'server': {'name': SERVER_NAME,
-                              'imageRef': image,
-                              'flavorRef': flavor_id}}
+        payload = {
+            'server': {
+                'name': SERVER_NAME,
+                'imageRef': image,
+                'flavorRef': flavor_id,
+            }
+        }
+        if network_id:
+            payload['server']['networks'] = [{'uuid': network_id}]
         response = requests.post(nova_url + '/servers', headers=headers,
                                     data=json.dumps(payload),
-                                    cert=argholder.cert, verify=False,
+                                    cert=argholder.cert, verify=True,
                                     timeout=argholder.timeout)
         response.raise_for_status()
         server_id = response.json()['server']['id']
@@ -275,6 +310,8 @@ def main():
     except (requests.exceptions.ConnectionError,
             requests.exceptions.Timeout, requests.exceptions.HTTPError,
             AssertionError, IndexError, AttributeError) as e:
+        if argholder.verb:
+            print 'Error from server while creating server: %s' % response.text
         helpers.nagios_out('Critical', 'Could not launch server from image UUID:%s: %s' % (image, helpers.errmsg_from_excp(e)), 2)
 
 
@@ -291,7 +328,7 @@ def main():
             headers.update({'x-auth-token': ks_token})
             response = requests.get(nova_url + '/servers/%s' % (server_id),
                                     headers=headers, cert=argholder.cert,
-                                    verify=False,
+                                    verify=True,
                                     timeout=argholder.timeout)
             response.raise_for_status()
             status = response.json()['server']['status']
@@ -301,6 +338,11 @@ def main():
             if 'ACTIVE' in status:
                 server_built = True
                 et = time.time()
+                break
+            if 'ERROR' in status:
+                et = time.time()
+                if argholder.verb:
+                    print "Error from nova: %s" % response.json()['server'].get('fault', '')
                 break
             time.sleep(sleepsec)
         except (requests.exceptions.ConnectionError,
@@ -325,88 +367,97 @@ def main():
         if argholder.verb:
             print "\nServer created in %.2f seconds" % (server_createt)
 
-        # server delete
+    # server delete
+    try:
+        headers, payload= {}, {}
+        headers.update({'x-auth-token': ks_token})
+        response = requests.delete(nova_url + '/servers/%s' %
+                                    (server_id), headers=headers,
+                                    cert=argholder.cert, verify=True,
+                                    timeout=argholder.timeout)
+        if argholder.verb:
+            print "Trying to delete server=%s" % server_id
+        response.raise_for_status()
+    except (requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout, requests.exceptions.HTTPError,
+            AssertionError, IndexError, AttributeError) as e:
+        if argholder.verb:
+            print 'Error from server while deleting server: %s' % response.text
+        helpers.nagios_out('Critical', 'could not execute DELETE server=%s: %s' % (server_id, helpers.errmsg_from_excp(e)), 2)
+
+    # waiting for DELETED status
+    i = 0
+    server_deleted = False
+    st = time.time()
+    if argholder.verb:
+        sys.stdout.write('Check server status every %ds: ' % (sleepsec))
+    while i < TIMEOUT_CREATE_DELETE/sleepsec:
+        # server status
         try:
             headers, payload= {}, {}
             headers.update({'x-auth-token': ks_token})
-            response = requests.delete(nova_url + '/servers/%s' %
-                                        (server_id), headers=headers,
-                                        cert=argholder.cert, verify=False,
-                                        timeout=argholder.timeout)
-            if argholder.verb:
-                print "Trying to delete server=%s" % server_id
-            response.raise_for_status()
-        except (requests.exceptions.ConnectionError,
-                requests.exceptions.Timeout, requests.exceptions.HTTPError,
-                AssertionError, IndexError, AttributeError) as e:
-            helpers.nagios_out('Critical', 'could not execute DELETE server=%s: %s' % (server_id, helpers.errmsg_from_excp(e)), 2)
 
-        # waiting for DELETED status
-        i = 0
-        server_deleted = False
-        st = time.time()
-        if argholder.verb:
-            sys.stdout.write('Check server status every %ds: ' % (sleepsec))
-        while i < TIMEOUT_CREATE_DELETE/sleepsec:
-            # server status
-            try:
-                headers, payload= {}, {}
-                headers.update({'x-auth-token': ks_token})
-
-                response = requests.get(nova_url + '/servers', headers=headers,
-                                        cert=argholder.cert, verify=False,
-                                        timeout=argholder.timeout)
-                servfound = False
-                for s in response.json()['servers']:
-                    if server_id == s['id']:
-                        servfound = True
-                        response = requests.get(nova_url + '/servers/%s' %
-                                                (server_id), headers=headers,
-                                                cert=argholder.cert, verify=False,
-                                                timeout=argholder.timeout)
-                        response.raise_for_status()
-                        status = response.json()['server']['status']
-                        if argholder.verb:
-                            sys.stdout.write(status+' ')
-                            sys.stdout.flush()
-                        if status.startswith('DELETED'):
-                            server_deleted = True
-                            et = time.time()
-                            break
-
-                if not servfound:
-                    server_deleted = True
-                    et = time.time()
+            response = requests.get(nova_url + '/servers', headers=headers,
+                                    cert=argholder.cert, verify=True,
+                                    timeout=argholder.timeout)
+            servfound = False
+            for s in response.json()['servers']:
+                if server_id == s['id']:
+                    servfound = True
+                    response = requests.get(nova_url + '/servers/%s' %
+                                            (server_id), headers=headers,
+                                            cert=argholder.cert, verify=True,
+                                            timeout=argholder.timeout)
+                    response.raise_for_status()
+                    status = response.json()['server']['status']
                     if argholder.verb:
-                        sys.stdout.write('DELETED')
+                        sys.stdout.write(status+' ')
                         sys.stdout.flush()
-                    break
+                    if status.startswith('DELETED'):
+                        server_deleted = True
+                        et = time.time()
+                        break
 
-                time.sleep(sleepsec)
-            except (requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.HTTPError, AssertionError,
-                    IndexError, AttributeError) as e:
-
+            if not servfound:
                 server_deleted = True
                 et = time.time()
-
                 if argholder.verb:
-                    sys.stdout.write('\n')
-                    sys.stdout.write('Could not fetch server:%s status: %s - server is DELETED' % (server_id,
-                                                                                                    helpers.errmsg_from_excp(e)))
-                    break
-            i += 1
-        else:
+                    sys.stdout.write('DELETED')
+                    sys.stdout.flush()
+                break
+
+            time.sleep(sleepsec)
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError, AssertionError,
+                IndexError, AttributeError) as e:
+
+            server_deleted = True
+            et = time.time()
+
             if argholder.verb:
                 sys.stdout.write('\n')
-            helpers.nagios_out('Critical', 'could not delete server:%s, timeout:%d exceeded' % (server_id, TIMEOUT_CREATE_DELETE), 2)
+                sys.stdout.write('Could not fetch server:%s status: %s - server is DELETED' % (server_id,
+                                                                                                helpers.errmsg_from_excp(e)))
+                break
+        i += 1
+    else:
+        if argholder.verb:
+            sys.stdout.write('\n')
+        helpers.nagios_out('Critical', 'could not delete server:%s, timeout:%d exceeded' % (server_id, TIMEOUT_CREATE_DELETE), 2)
 
     server_deletet = round(et - st, 2)
+    if argholder.verb:
+        print "\nServer=%s deleted in %.2f seconds" % (server_id, server_deletet)
 
     if server_built and server_deleted:
-        if argholder.verb:
-            print "\nServer=%s deleted in %.2f seconds" % (server_id, server_deletet)
         helpers.nagios_out('OK', 'Compute instance=%s created(%.2fs) and destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 0)
+    elif server_built:
+        # Built but not deleted
+        helpers.nagios_out('Critical', 'Compute instance=%s created (%.2fs) but not destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 2)
+    else:
+        # not built but deleted
+        helpers.nagios_out('Critical', 'Compute instance=%s created with error(%.2fs) and destroyed(%.2fs)' % (server_id, server_createt, server_deletet), 2)
+
 
 main()
