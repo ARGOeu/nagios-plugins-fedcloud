@@ -237,7 +237,7 @@ def main():
         try:
             headers, payload= {}, {}
             headers.update({'x-auth-token': ks_token})
-            response = requests.get(nova_url + '/flavors', headers=headers, cert=argholder.cert,
+            response = requests.get(nova_url + '/flavors', headers=headers,
                                     verify=True, timeout=argholder.timeout)
             response.raise_for_status()
 
@@ -263,8 +263,7 @@ def main():
             headers = {'content-type': 'application/json', 'accept': 'application/json'}
             headers.update({'x-auth-token': ks_token})
             response = requests.get(neutron_url + '/v2.0/networks', headers=headers,
-                                    cert=argholder.cert, verify=True,
-                                    timeout=argholder.timeout)
+                                    verify=True, timeout=argholder.timeout)
             response.raise_for_status()
             for network in response.json()['networks']:
                 # assume first available active network owned by the tenant is ok
@@ -300,8 +299,7 @@ def main():
         if network_id:
             payload['server']['networks'] = [{'uuid': network_id}]
         response = requests.post(nova_url + '/servers', headers=headers,
-                                    data=json.dumps(payload),
-                                    cert=argholder.cert, verify=True,
+                                    data=json.dumps(payload), verify=True,
                                     timeout=argholder.timeout)
         response.raise_for_status()
         server_id = response.json()['server']['id']
@@ -327,8 +325,7 @@ def main():
             headers, payload= {}, {}
             headers.update({'x-auth-token': ks_token})
             response = requests.get(nova_url + '/servers/%s' % (server_id),
-                                    headers=headers, cert=argholder.cert,
-                                    verify=True,
+                                    headers=headers, verify=True,
                                     timeout=argholder.timeout)
             response.raise_for_status()
             status = response.json()['server']['status']
@@ -372,8 +369,7 @@ def main():
         headers, payload= {}, {}
         headers.update({'x-auth-token': ks_token})
         response = requests.delete(nova_url + '/servers/%s' %
-                                    (server_id), headers=headers,
-                                    cert=argholder.cert, verify=True,
+                                    (server_id), headers=headers, verify=True,
                                     timeout=argholder.timeout)
         if argholder.verb:
             print "Trying to delete server=%s" % server_id
@@ -398,15 +394,14 @@ def main():
             headers.update({'x-auth-token': ks_token})
 
             response = requests.get(nova_url + '/servers', headers=headers,
-                                    cert=argholder.cert, verify=True,
-                                    timeout=argholder.timeout)
+                                    verify=True, timeout=argholder.timeout)
             servfound = False
             for s in response.json()['servers']:
                 if server_id == s['id']:
                     servfound = True
                     response = requests.get(nova_url + '/servers/%s' %
                                             (server_id), headers=headers,
-                                            cert=argholder.cert, verify=True,
+                                            verify=True,
                                             timeout=argholder.timeout)
                     response.raise_for_status()
                     status = response.json()['server']['status']
