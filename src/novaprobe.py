@@ -25,9 +25,6 @@ DEFAULT_PORT = 443
 TIMEOUT_CREATE_DELETE = 600
 SERVER_NAME = "cloudmonprobe-servertest"
 
-strerr = ""
-num_excp_expand = 0
-
 
 def get_info_v3(tenant, last_response):
     try:
@@ -181,6 +178,7 @@ def main():
     )
 
     parser.parse_args(namespace=argholder)
+    helpers.verbose = argholder.verb
 
     for arg in ["endpoint", "timeout"]:
         if eval("argholder." + arg) == None:
@@ -230,12 +228,10 @@ def main():
             tenant_id, nova_url, glance_url, neutron_url = get_info_v3(
                 tenant, last_response
             )
-            if argholder.verb:
-                print "Authenticated with OpenID Connect"
+            helpers.debug("Authenticated with OpenID Connect")
         except helpers.AuthenticationException as e:
             # just go ahead
-            if argholder.verb:
-                print "Authentication with OpenID Connect failed"
+            helpers.debug("Authentication with OpenID Connect failed")
     if not ks_token:
         if argholder.cert:
             # try with certificate v3
@@ -246,11 +242,9 @@ def main():
                 tenant_id, nova_url, glance_url, neutron_url = get_info_v3(
                     tenant, last_response
                 )
-                if argholder.verb:
-                    print "Authenticated with VOMS (Keystone V3)"
+                helpers.debug("Authenticated with VOMS (Keystone V3)")
             except helpers.AuthenticationException as e:
-                if argholder.verb:
-                    print "Authentication with VOMS (Keystone V3) failed"
+                helpers.debug("Authentication with VOMS (Keystone V3) failed")
     if not ks_token:
         if argholder.cert:
             # try with certificate v2
@@ -261,8 +255,7 @@ def main():
                 tenant_id, nova_url, glance_url, neutron_url = get_info_v2(
                     tenant, last_response
                 )
-                if argholder.verb:
-                    print "Authenticated with VOMS (Keystone V2)"
+                helpers.debug("Authenticated with VOMS (Keystone V2)")
             except helpers.AuthenticationException as e:
                 # no more authentication methods to try, fail here
                 helpers.nagios_out(
@@ -272,16 +265,15 @@ def main():
             # just fail
             helpers.nagios_out("Critical", "Unable to authenticate against Keystone", 2)
 
-    if argholder.verb:
-        print "Endpoint: %s" % (argholder.endpoint)
-        print "Auth token (cut to 64 chars): %.64s" % ks_token
-        print "Project OPS, ID: %s" % tenant_id
-        print "Nova: %s" % nova_url
-        print "Glance: %s" % glance_url
-        print "Neutron: %s" % neutron_url
+    helpers.debug("Endpoint: %s" % (argholder.endpoint))
+    helpers.debug("Auth token (cut to 64 chars): %.64s" % ks_token)
+    helpers.debug("Project OPS, ID: %s" % tenant_id)
+    helpers.debug("Nova: %s" % nova_url)
+    helpers.debug("Glance: %s" % glance_url)
+    helpers.debug("Neutron: %s" % neutron_url)
 
-    # get a common sessioon for not repeating the auth header code
-    session = request.Session()
+    # get a common session for not repeating the auth header code
+    session = requests.Session()
     session.headers.update({"x-auth-token": ks_token})
     session.headers.update(
         {"content-type": "application/json", "accept": "application/json"}
@@ -294,8 +286,7 @@ def main():
     else:
         image = argholder.image
 
-    if argholder.verb:
-        print "Image: %s" % image
+    helpers.debug("Image: %s" % image)
 
     if not argholder.flavor:
         flavor_id = get_smaller_flavor_id(nova_url, session)
@@ -329,8 +320,7 @@ def main():
                 2,
             )
 
-    if argholder.verb:
-        print "Flavor ID: %s" % flavor_id
+    helpers.debug("Flavor ID: %s" % flavor_id)
 
     network_id = None
     if neutron_url:
@@ -341,12 +331,12 @@ def main():
                 # assume first available active network owned by the tenant is ok
                 if network["status"] == "ACTIVE" and network["tenant_id"] == tenant_id:
                     network_id = network["id"]
-                    if argholder.verb:
-                        print "Network id: %s" % network_id
-                        break
+                    helpers.debug("Network id: %s" % network_id)
+                    break
             else:
-                if argholder.verb:
-                    print "No tenant-owned network found, hoping VM creation will still work..."
+                helpers.debug(
+                    "No tenant-owned network found, hoping VM creation will still work..."
+                )
         except (
             requests.exceptions.ConnectionError,
             requests.exceptions.Timeout,
@@ -362,8 +352,7 @@ def main():
             )
 
     else:
-        if argholder.verb:
-            print "Skipping network discovery as there is no neutron endpoint"
+        helpers.debug("Skipping network discovery as there is no neutron endpoint")
 
     # remove previous servers if found
 
@@ -377,8 +366,7 @@ def main():
         response = session.post(nova_url + "/servers", data=json.dumps(payload))
         response.raise_for_status()
         server_id = response.json()["server"]["id"]
-        if argholder.verb:
-            print "Creating server:%s name:%s" % (server_id, SERVER_NAME)
+        helpers.debug("Creating server:%s name:%s" % (server_id, SERVER_NAME))
     except (
         requests.exceptions.ConnectionError,
         requests.exceptions.Timeout,
@@ -387,8 +375,7 @@ def main():
         IndexError,
         AttributeError,
     ) as e:
-        if argholder.verb:
-            print "Error from server while creating server: %s" % response.text
+        helpers.debug("Error from server while creating server: %s" % response.text)
         helpers.nagios_out(
             "Critical",
             "Could not launch server from image UUID:%s: %s"
@@ -400,27 +387,23 @@ def main():
     server_createt, server_deletet = 0, 0
     server_built = False
     st = time.time()
-    if argholder.verb:
-        sys.stdout.write("Check server status every %ds: " % (sleepsec))
+    helpers.debug("Check server status every %ds: " % (sleepsec))
     while i < TIMEOUT_CREATE_DELETE / sleepsec:
         # server status
         try:
             response = session.get(nova_url + "/servers/%s" % (server_id))
             response.raise_for_status()
             status = response.json()["server"]["status"]
-            if argholder.verb:
-                sys.stdout.write(status + " ")
-                sys.stdout.flush()
+            helpers.debug(status, False)
             if "ACTIVE" in status:
                 server_built = True
                 et = time.time()
                 break
             if "ERROR" in status:
                 et = time.time()
-                if argholder.verb:
-                    print "Error from nova: %s" % response.json()["server"].get(
-                        "fault", ""
-                    )
+                helpers.debug(
+                    "Error from nova: %s" % response.json()["server"].get("fault", "")
+                )
                 break
             time.sleep(sleepsec)
         except (
@@ -431,13 +414,12 @@ def main():
             IndexError,
             AttributeError,
         ) as e:
-            if i < tss and argholder.verb:
-                sys.stdout.write("\n")
-                sys.stdout.write(
+            if i < tss:
+                helpers.debug(
                     "Try to fetch server:%s status one more time. Error was %s\n"
                     % (server_id, helpers.errmsg_from_excp(e))
                 )
-                sys.stdout.write("Check server status every %ds: " % (sleepsec))
+                helpers.debug("Check server status every %ds: " % (sleepsec))
             else:
                 helpers.nagios_out(
                     "Critical",
@@ -447,8 +429,6 @@ def main():
                 )
         i += 1
     else:
-        if argholder.verb:
-            sys.stdout.write("\n")
         helpers.nagios_out(
             "Critical",
             "could not create server:%s, timeout:%d exceeded"
@@ -459,14 +439,12 @@ def main():
     server_createt = round(et - st, 2)
 
     if server_built:
-        if argholder.verb:
-            print "\nServer created in %.2f seconds" % (server_createt)
+        helpers.debug("\nServer created in %.2f seconds" % (server_createt))
 
     # server delete
     try:
+        helpers.debug("Trying to delete server=%s" % server_id)
         response = session.delete(nova_url + "/servers/%s" % (server_id))
-        if argholder.verb:
-            print "Trying to delete server=%s" % server_id
         response.raise_for_status()
     except (
         requests.exceptions.ConnectionError,
@@ -476,8 +454,7 @@ def main():
         IndexError,
         AttributeError,
     ) as e:
-        if argholder.verb:
-            print "Error from server while deleting server: %s" % response.text
+        helpers.debug("Error from server while deleting server: %s" % response.text)
         helpers.nagios_out(
             "Critical",
             "could not execute DELETE server=%s: %s"
@@ -489,8 +466,7 @@ def main():
     i = 0
     server_deleted = False
     st = time.time()
-    if argholder.verb:
-        sys.stdout.write("Check server status every %ds: " % (sleepsec))
+    helpers.debug("Check server status every %ds:" % (sleepsec))
     while i < TIMEOUT_CREATE_DELETE / sleepsec:
         # server status
         try:
@@ -502,9 +478,7 @@ def main():
                     response = session.get(nova_url + "/servers/%s" % (server_id))
                     response.raise_for_status()
                     status = response.json()["server"]["status"]
-                    if argholder.verb:
-                        sys.stdout.write(status + " ")
-                        sys.stdout.flush()
+                    helpers.debug(status, False)
                     if status.startswith("DELETED"):
                         server_deleted = True
                         et = time.time()
@@ -513,9 +487,7 @@ def main():
             if not servfound:
                 server_deleted = True
                 et = time.time()
-                if argholder.verb:
-                    sys.stdout.write("DELETED")
-                    sys.stdout.flush()
+                helpers.debug("DELETED", False)
                 break
 
             time.sleep(sleepsec)
@@ -527,21 +499,15 @@ def main():
             IndexError,
             AttributeError,
         ) as e:
-
             server_deleted = True
             et = time.time()
-
-            if argholder.verb:
-                sys.stdout.write("\n")
-                sys.stdout.write(
-                    "Could not fetch server:%s status: %s - server is DELETED"
-                    % (server_id, helpers.errmsg_from_excp(e))
-                )
-                break
+            helpers.debug(
+                "Could not fetch server:%s status: %s - server is DELETED"
+                % (server_id, helpers.errmsg_from_excp(e))
+            )
+            break
         i += 1
     else:
-        if argholder.verb:
-            sys.stdout.write("\n")
         helpers.nagios_out(
             "Critical",
             "could not delete server:%s, timeout:%d exceeded"
@@ -550,8 +516,7 @@ def main():
         )
 
     server_deletet = round(et - st, 2)
-    if argholder.verb:
-        print "\nServer=%s deleted in %.2f seconds" % (server_id, server_deletet)
+    helpers.debug("\nServer=%s deleted in %.2f seconds" % (server_id, server_deletet))
 
     if server_built and server_deleted:
         helpers.nagios_out(

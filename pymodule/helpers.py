@@ -10,6 +10,8 @@ from urlparse import urlparse
 
 strerr = ""
 num_excp_expand = 0
+extra_out = []
+verbose = False
 
 
 class AuthenticationException(Exception):
@@ -18,7 +20,24 @@ class AuthenticationException(Exception):
 
 def nagios_out(status, msg, retcode):
     sys.stdout.write(status + ": " + msg + "\n")
+    global extra_out
+    global verbose
+    if extra_out and verbose:
+        sys.stdout.write("\n".join(extra_out))
     sys.exit(retcode)
+
+
+def debug(msg, newline=True):
+    global verbose
+    if not verbose:
+        return
+    global extra_out
+    if newline:
+        extra_out.append(msg)
+    else:
+        if not extra_out:
+            extra_out.append("")
+        extra_out[-1] = " ".join((extra_out[-1], msg))
 
 
 def get_keystone_oidc_unscoped_token(
