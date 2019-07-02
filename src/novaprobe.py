@@ -103,16 +103,14 @@ def get_info_v2(tenant, last_response):
     return tenant_id, r["compute"], r["image"], r["network"]
 
 
-def get_image_id(glance_url, ks_token, appdb_id):
+def get_image_id(glance_url, appdb_id, session):
     next_url = "v2/images"
     try:
         # TODO: query for the exact image directly once that info is available in glance
         # that should remove the need for the loop
         while next_url:
             images_url = urlparse.urljoin(glance_url, next_url)
-            response = requests.get(
-                images_url, headers={"x-auth-token": ks_token}, verify=True
-            )
+            response = session.get(images_url)
             response.raise_for_status()
             for img in response.json()["images"]:
                 attrs = json.loads(img.get("APPLIANCE_ATTRIBUTES", "{}"))
@@ -134,14 +132,13 @@ def get_image_id(glance_url, ks_token, appdb_id):
     )
 
 
-def get_smaller_flavor_id(nova_url, ks_token):
+def get_smaller_flavor_id(nova_url, session):
     flavor_url = nova_url + "/flavors/detail"
     # flavors with at least 8GB of disk, sorted by number of cpus
     query = {"minDisk": "8", "sort_dir": "asc", "sort_key": "vcpus"}
-    headers = {"x-auth-token": ks_token}
     try:
 
-        response = requests.get(flavor_url, headers=headers, params=query, verify=True)
+        response = session.get(flavor_url, params=query)
         response.raise_for_status()
         flavors = response.json()["flavors"]
         # minimum number of CPUs from first result (they are sorted)
@@ -283,8 +280,17 @@ def main():
         print "Glance: %s" % glance_url
         print "Neutron: %s" % neutron_url
 
+    # get a common sessioon for not repeating the auth header code
+    session = request.Session()
+    session.headers.update({"x-auth-token": ks_token})
+    session.headers.update(
+        {"content-type": "application/json", "accept": "application/json"}
+    )
+    session.timeout = argholder.timeout
+    session.verify = True
+
     if not argholder.image:
-        image = get_image_id(glance_url, ks_token, argholder.appdb_img)
+        image = get_image_id(glance_url, argholder.appdb_img, session)
     else:
         image = argholder.image
 
@@ -292,20 +298,12 @@ def main():
         print "Image: %s" % image
 
     if not argholder.flavor:
-        flavor_id = get_smaller_flavor_id(nova_url, ks_token)
+        flavor_id = get_smaller_flavor_id(nova_url, session)
     else:
         # fetch flavor_id for given flavor (resource)
         try:
-            headers, payload = {}, {}
-            headers.update({"x-auth-token": ks_token})
-            response = requests.get(
-                nova_url + "/flavors",
-                headers=headers,
-                verify=True,
-                timeout=argholder.timeout,
-            )
+            response = session.get(nova_url + "/flavors")
             response.raise_for_status()
-
             flavors = response.json()["flavors"]
             flavor_id = None
             for f in flavors:
@@ -337,15 +335,7 @@ def main():
     network_id = None
     if neutron_url:
         try:
-            headers, payload = {}, {}
-            headers = {"content-type": "application/json", "accept": "application/json"}
-            headers.update({"x-auth-token": ks_token})
-            response = requests.get(
-                neutron_url + "/v2.0/networks",
-                headers=headers,
-                verify=True,
-                timeout=argholder.timeout,
-            )
+            response = session.get(neutron_url + "/v2.0/networks")
             response.raise_for_status()
             for network in response.json()["networks"]:
                 # assume first available active network owned by the tenant is ok
@@ -379,21 +369,12 @@ def main():
 
     # create server
     try:
-        headers, payload = {}, {}
-        headers = {"content-type": "application/json", "accept": "application/json"}
-        headers.update({"x-auth-token": ks_token})
         payload = {
             "server": {"name": SERVER_NAME, "imageRef": image, "flavorRef": flavor_id}
         }
         if network_id:
             payload["server"]["networks"] = [{"uuid": network_id}]
-        response = requests.post(
-            nova_url + "/servers",
-            headers=headers,
-            data=json.dumps(payload),
-            verify=True,
-            timeout=argholder.timeout,
-        )
+        response = session.post(nova_url + "/servers", data=json.dumps(payload))
         response.raise_for_status()
         server_id = response.json()["server"]["id"]
         if argholder.verb:
@@ -424,14 +405,7 @@ def main():
     while i < TIMEOUT_CREATE_DELETE / sleepsec:
         # server status
         try:
-            headers, payload = {}, {}
-            headers.update({"x-auth-token": ks_token})
-            response = requests.get(
-                nova_url + "/servers/%s" % (server_id),
-                headers=headers,
-                verify=True,
-                timeout=argholder.timeout,
-            )
+            response = session.get(nova_url + "/servers/%s" % (server_id))
             response.raise_for_status()
             status = response.json()["server"]["status"]
             if argholder.verb:
@@ -490,14 +464,7 @@ def main():
 
     # server delete
     try:
-        headers, payload = {}, {}
-        headers.update({"x-auth-token": ks_token})
-        response = requests.delete(
-            nova_url + "/servers/%s" % (server_id),
-            headers=headers,
-            verify=True,
-            timeout=argholder.timeout,
-        )
+        response = session.delete(nova_url + "/servers/%s" % (server_id))
         if argholder.verb:
             print "Trying to delete server=%s" % server_id
         response.raise_for_status()
@@ -527,25 +494,12 @@ def main():
     while i < TIMEOUT_CREATE_DELETE / sleepsec:
         # server status
         try:
-            headers, payload = {}, {}
-            headers.update({"x-auth-token": ks_token})
-
-            response = requests.get(
-                nova_url + "/servers",
-                headers=headers,
-                verify=True,
-                timeout=argholder.timeout,
-            )
+            response = session.get(nova_url + "/servers")
             servfound = False
             for s in response.json()["servers"]:
                 if server_id == s["id"]:
                     servfound = True
-                    response = requests.get(
-                        nova_url + "/servers/%s" % (server_id),
-                        headers=headers,
-                        verify=True,
-                        timeout=argholder.timeout,
-                    )
+                    response = session.get(nova_url + "/servers/%s" % (server_id))
                     response.raise_for_status()
                     status = response.json()["server"]["status"]
                     if argholder.verb:
