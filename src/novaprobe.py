@@ -156,6 +156,172 @@ def get_smaller_flavor_id(nova_url, session):
         helpers.nagios_out("Critical", "Could not fetch flavor ID: %s" % str(e), 2)
 
 
+def wait_for_delete(nova_url, server_id, session):
+    server_deleted = False
+    i, sleepsec = 0, 1
+    helpers.debug("Check server %s status every %ds:" % (server_id, sleepsec))
+    while i < TIMEOUT_CREATE_DELETE / sleepsec:
+        # server status
+        try:
+            response = session.get(nova_url + "/servers")
+            servfound = False
+            for s in response.json()["servers"]:
+                if server_id == s["id"]:
+                    servfound = True
+                    response = session.get(nova_url + "/servers/%s" % server_id)
+                    response.raise_for_status()
+                    status = response.json()["server"]["status"]
+                    helpers.debug(status, False)
+                    if status.startswith("DELETED"):
+                        server_deleted = True
+                        break
+            if not servfound:
+                server_deleted = True
+                helpers.debug("DELETED", False)
+            if not server_deleted:
+                time.sleep(sleepsec)
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.HTTPError,
+            AssertionError,
+            IndexError,
+            AttributeError,
+        ) as e:
+            server_deleted = True
+            helpers.debug(
+                "Could not fetch server:%s status: %s - server is DELETED"
+                % (server_id, helpers.errmsg_from_excp(e))
+            )
+            break
+        i += 1
+    return server_deleted
+
+
+def delete_server(nova_url, server_id, session):
+    try:
+        helpers.debug("Trying to delete server=%s" % server_id)
+        response = session.delete(nova_url + "/servers/%s" % (server_id))
+        response.raise_for_status()
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.HTTPError,
+        AssertionError,
+        IndexError,
+        AttributeError,
+    ) as e:
+        helpers.debug("Error from server while deleting server: %s" % response.text)
+        helpers.nagios_out(
+            "Critical",
+            "could not execute DELETE server=%s: %s"
+            % (server["id"], helpers.errmsg_from_excp(e)),
+            2,
+        )
+
+
+def clean_up(nova_url, session):
+    try:
+        response = session.get(nova_url + "/servers")
+        for s in response.json()["servers"]:
+            if s["name"] == SERVER_NAME:
+                helpers.debug("Found old server %s, waiting for it" % s["id"])
+                if not wait_for_delete(nova_url, s["id"], session):
+                    helpers.debug("Old server is still around after timeout, deleting")
+                    delete_server(nova_url, s["id"], session)
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.HTTPError,
+        AssertionError,
+        IndexError,
+        AttributeError,
+    ) as e:
+        helpers.debug(
+            "Something went wrong while cleaning up, should be still ok: %s"
+            % helpers.errmsg_from_excp(e)
+        )
+
+
+def wait_for_active(nova_url, server_id, session):
+    i, sleepsec, tss = 0, 1, 3
+    helpers.debug("Check server status every %ds: " % (sleepsec))
+    while i < TIMEOUT_CREATE_DELETE / sleepsec:
+        # server status
+        try:
+            response = session.get(nova_url + "/servers/%s" % (server_id))
+            response.raise_for_status()
+            status = response.json()["server"]["status"]
+            helpers.debug(status, False)
+            if "ACTIVE" in status:
+                return True
+            if "ERROR" in status:
+                helpers.debug(
+                    "Error from nova: %s" % response.json()["server"].get("fault", "")
+                )
+                return False
+            time.sleep(sleepsec)
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.HTTPError,
+            AssertionError,
+            IndexError,
+            AttributeError,
+        ) as e:
+            if i < tss:
+                helpers.debug(
+                    "Try to fetch server:%s status one more time. Error was %s\n"
+                    % (server_id, helpers.errmsg_from_excp(e))
+                )
+                helpers.debug("Check server status every %ds: " % (sleepsec))
+            else:
+                helpers.nagios_out(
+                    "Critical",
+                    "could not fetch server:%s status: %s"
+                    % (server_id, helpers.errmsg_from_excp(e)),
+                    2,
+                )
+        i += 1
+    else:
+        helpers.nagios_out(
+            "Critical",
+            "could not create server:%s, timeout:%d exceeded"
+            % (server_id, TIMEOUT_CREATE_DELETE),
+            2,
+        )
+        return False
+
+
+def create_server(nova_url, image, flavor_id, network_id, session):
+    try:
+        payload = {
+            "server": {"name": SERVER_NAME, "imageRef": image, "flavorRef": flavor_id}
+        }
+        if network_id:
+            payload["server"]["networks"] = [{"uuid": network_id}]
+        response = session.post(nova_url + "/servers", data=json.dumps(payload))
+        response.raise_for_status()
+        server_id = response.json()["server"]["id"]
+        helpers.debug("Creating server:%s name:%s" % (server_id, SERVER_NAME))
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.HTTPError,
+        AssertionError,
+        IndexError,
+        AttributeError,
+    ) as e:
+        helpers.debug("Error from server while creating server: %s" % response.text)
+        helpers.nagios_out(
+            "Critical",
+            "Could not launch server from image UUID:%s: %s"
+            % (image, helpers.errmsg_from_excp(e)),
+            2,
+        )
+    return server_id
+
+
 def main():
     class ArgHolder(object):
         pass
@@ -355,167 +521,22 @@ def main():
         helpers.debug("Skipping network discovery as there is no neutron endpoint")
 
     # remove previous servers if found
+    clean_up(nova_url, session)
 
     # create server
-    try:
-        payload = {
-            "server": {"name": SERVER_NAME, "imageRef": image, "flavorRef": flavor_id}
-        }
-        if network_id:
-            payload["server"]["networks"] = [{"uuid": network_id}]
-        response = session.post(nova_url + "/servers", data=json.dumps(payload))
-        response.raise_for_status()
-        server_id = response.json()["server"]["id"]
-        helpers.debug("Creating server:%s name:%s" % (server_id, SERVER_NAME))
-    except (
-        requests.exceptions.ConnectionError,
-        requests.exceptions.Timeout,
-        requests.exceptions.HTTPError,
-        AssertionError,
-        IndexError,
-        AttributeError,
-    ) as e:
-        helpers.debug("Error from server while creating server: %s" % response.text)
-        helpers.nagios_out(
-            "Critical",
-            "Could not launch server from image UUID:%s: %s"
-            % (image, helpers.errmsg_from_excp(e)),
-            2,
-        )
-
-    i, s, e, sleepsec, tss = 0, 0, 0, 1, 3
-    server_createt, server_deletet = 0, 0
-    server_built = False
     st = time.time()
-    helpers.debug("Check server status every %ds: " % (sleepsec))
-    while i < TIMEOUT_CREATE_DELETE / sleepsec:
-        # server status
-        try:
-            response = session.get(nova_url + "/servers/%s" % (server_id))
-            response.raise_for_status()
-            status = response.json()["server"]["status"]
-            helpers.debug(status, False)
-            if "ACTIVE" in status:
-                server_built = True
-                et = time.time()
-                break
-            if "ERROR" in status:
-                et = time.time()
-                helpers.debug(
-                    "Error from nova: %s" % response.json()["server"].get("fault", "")
-                )
-                break
-            time.sleep(sleepsec)
-        except (
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout,
-            requests.exceptions.HTTPError,
-            AssertionError,
-            IndexError,
-            AttributeError,
-        ) as e:
-            if i < tss:
-                helpers.debug(
-                    "Try to fetch server:%s status one more time. Error was %s\n"
-                    % (server_id, helpers.errmsg_from_excp(e))
-                )
-                helpers.debug("Check server status every %ds: " % (sleepsec))
-            else:
-                helpers.nagios_out(
-                    "Critical",
-                    "could not fetch server:%s status: %s"
-                    % (server_id, helpers.errmsg_from_excp(e)),
-                    2,
-                )
-        i += 1
-    else:
-        helpers.nagios_out(
-            "Critical",
-            "could not create server:%s, timeout:%d exceeded"
-            % (server_id, TIMEOUT_CREATE_DELETE),
-            2,
-        )
-
-    server_createt = round(et - st, 2)
+    server_id = create_server(nova_url, image, flavor_id, network_id, session)
+    server_built = wait_for_active(nova_url, server_id, session)
+    server_createt = round(time.time() - st, 2)
 
     if server_built:
         helpers.debug("\nServer created in %.2f seconds" % (server_createt))
 
     # server delete
-    try:
-        helpers.debug("Trying to delete server=%s" % server_id)
-        response = session.delete(nova_url + "/servers/%s" % (server_id))
-        response.raise_for_status()
-    except (
-        requests.exceptions.ConnectionError,
-        requests.exceptions.Timeout,
-        requests.exceptions.HTTPError,
-        AssertionError,
-        IndexError,
-        AttributeError,
-    ) as e:
-        helpers.debug("Error from server while deleting server: %s" % response.text)
-        helpers.nagios_out(
-            "Critical",
-            "could not execute DELETE server=%s: %s"
-            % (server_id, helpers.errmsg_from_excp(e)),
-            2,
-        )
-
-    # waiting for DELETED status
-    i = 0
-    server_deleted = False
     st = time.time()
-    helpers.debug("Check server status every %ds:" % (sleepsec))
-    while i < TIMEOUT_CREATE_DELETE / sleepsec:
-        # server status
-        try:
-            response = session.get(nova_url + "/servers")
-            servfound = False
-            for s in response.json()["servers"]:
-                if server_id == s["id"]:
-                    servfound = True
-                    response = session.get(nova_url + "/servers/%s" % (server_id))
-                    response.raise_for_status()
-                    status = response.json()["server"]["status"]
-                    helpers.debug(status, False)
-                    if status.startswith("DELETED"):
-                        server_deleted = True
-                        et = time.time()
-                        break
-
-            if not servfound:
-                server_deleted = True
-                et = time.time()
-                helpers.debug("DELETED", False)
-                break
-
-            time.sleep(sleepsec)
-        except (
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout,
-            requests.exceptions.HTTPError,
-            AssertionError,
-            IndexError,
-            AttributeError,
-        ) as e:
-            server_deleted = True
-            et = time.time()
-            helpers.debug(
-                "Could not fetch server:%s status: %s - server is DELETED"
-                % (server_id, helpers.errmsg_from_excp(e))
-            )
-            break
-        i += 1
-    else:
-        helpers.nagios_out(
-            "Critical",
-            "could not delete server:%s, timeout:%d exceeded"
-            % (server_id, TIMEOUT_CREATE_DELETE),
-            2,
-        )
-
-    server_deletet = round(et - st, 2)
+    delete_server(nova_url, server_id, session)
+    server_deleted = wait_for_delete(nova_url, server_id, session)
+    server_deletet = round(time.time() - st, 2)
     helpers.debug("\nServer=%s deleted in %.2f seconds" % (server_id, server_deletet))
 
     if server_built and server_deleted:
