@@ -178,8 +178,9 @@ def wait_for_delete(nova_url, server_id, session):
             if not servfound:
                 server_deleted = True
                 helpers.debug("DELETED", False)
-            if not server_deleted:
-                time.sleep(sleepsec)
+            if server_deleted:
+                break
+            time.sleep(sleepsec)
         except (
             requests.exceptions.ConnectionError,
             requests.exceptions.Timeout,
