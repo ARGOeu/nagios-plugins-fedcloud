@@ -212,9 +212,15 @@ def get_keystone_token_x509_v2(host, timeout, userca=None):
             "Connection error %s - Probe expects HTTPS endpoint"
             % (o.scheme + "://" + o.netloc)
         )
+
+    suffix = o.path.rstrip("/")
+    if suffix.endswith("v2.0") or suffix.endswith("v3"):
+        suffix = os.path.dirname(suffix)
+    suffix = suffix.rstrip("/")
+
     try:
         # fetch unscoped token
-        token_suffix = o.path.rstrip("/") + "/tokens"
+        token_suffix = suffix + "/v2.0/tokens"
 
         headers, payload, token = {}, {}, None
         headers.update({"Accept": "*/*"})
@@ -244,7 +250,7 @@ def get_keystone_token_x509_v2(host, timeout, userca=None):
     try:
         # use unscoped token to get a list of allowed tenants mapped to
         # ops VO from VOMS proxy cert
-        tenant_suffix = o.path.rstrip("/") + "/tenants"
+        tenant_suffix = suffix + "/v2.0/tenants"
 
         headers = {"content-type": "application/json", "accept": "application/json"}
         headers.update({"x-auth-token": token})
