@@ -230,6 +230,11 @@ def clean_up(nova_url, session):
                 if not wait_for_delete(nova_url, s["id"], session):
                     helpers.debug("Old server is still around after timeout, deleting")
                     delete_server(nova_url, s["id"], session)
+                    helpers.nagios_out(
+                        "Warning",
+                        "Previous monitoring instance deleted, probe won't go on!"
+                        1,
+                    )
     except (
         requests.exceptions.ConnectionError,
         requests.exceptions.Timeout,
