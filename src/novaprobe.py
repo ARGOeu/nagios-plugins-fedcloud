@@ -232,7 +232,7 @@ def clean_up(nova_url, session):
                     delete_server(nova_url, s["id"], session)
                     helpers.nagios_out(
                         "Warning",
-                        "Previous monitoring instance deleted, probe won't go on!"
+                        "Previous monitoring instance deleted, probe won't go on!",
                         1,
                     )
     except (
