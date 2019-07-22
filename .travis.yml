@@ -1,0 +1,10 @@
+language: python
+python:
+# CentOS 6...
+- "2.6"
+install:
+- pip install -r requirements.txt
+- ln -s pymodule nagios_plugins_fedcloud
+script:
+# At least does not have syntax error
+- PYTHONPATH=$PWD:$PYTHONPATH python src/novaprobe.py --help 
