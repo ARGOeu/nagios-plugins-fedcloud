@@ -1,12 +1,11 @@
+import json
 import os
 import sys
-import re
-import socket
+
 import requests
-import json
-from time import sleep
 
 from urlparse import urlparse
+
 
 strerr = ""
 num_excp_expand = 0
@@ -181,8 +180,8 @@ def get_keystone_v3_token(unscoped_token_getter, host, timeout, **kwargs):
         token = response.headers["X-Subject-Token"]
     except (KeyError, IndexError) as e:
         raise AuthenticationException(
-            "Could not fetch scoped keystone token for %s from response: Key not found %s"
-            % (project, errmsg_from_excp(e))
+            "Could not fetch scoped keystone token for %s from "
+            "response: Key not found %s" % (project, errmsg_from_excp(e))
         )
     except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
         raise AuthenticationException(
@@ -299,8 +298,8 @@ def get_keystone_token_x509_v2(host, timeout, userca=None):
         token = response.json()["access"]["token"]["id"]
     except (KeyError, IndexError) as e:
         raise AuthenticationException(
-            "Could not fetch scoped keystone token for %s from response: Key not found %s"
-            % (tenant, errmsg_from_excp(e))
+            "Could not fetch scoped keystone token for %s from "
+            "response: Key not found %s" % (tenant, errmsg_from_excp(e))
         )
     except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
         raise AuthenticationException(

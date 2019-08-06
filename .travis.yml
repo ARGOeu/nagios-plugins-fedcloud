@@ -4,7 +4,9 @@ python:
 - "2.7"
 install:
 - pip install -r requirements.txt
+- pip install flake8
 - ln -s pymodule nagios_plugins_fedcloud
 script:
+- flake8 --max-line-length=88 --ignore=''
 # At least does not have syntax error
 - PYTHONPATH=$PWD:$PYTHONPATH python src/novaprobe.py --help 

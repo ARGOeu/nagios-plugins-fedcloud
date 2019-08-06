@@ -14,15 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse, re
-import requests, sys, os, json
-import urlparse
+import argparse
+import json
+import os
 import time
+import urlparse
+
+import requests
 
 from nagios_plugins_fedcloud import helpers
 
-DEFAULT_PORT = 443
-TIMEOUT_CREATE_DELETE = 600
 # time to sleep between status checks
 STATUS_SLEEP_TIME = 2
 SERVER_NAME = "cloudmonprobe-servertest"
@@ -218,7 +219,7 @@ def delete_server(nova_url, server_id, session):
         helpers.nagios_out(
             "Critical",
             "could not execute DELETE server=%s: %s"
-            % (server["id"], helpers.errmsg_from_excp(e)),
+            % (server_id, helpers.errmsg_from_excp(e)),
             2,
         )
 
@@ -294,8 +295,7 @@ def wait_for_active(nova_url, server_id, vm_timeout, session):
     else:
         helpers.nagios_out(
             "Critical",
-            "could not create server:%s, timeout:%d exceeded"
-            % (server_id, vm_timeout),
+            "could not create server:%s, timeout:%d exceeded" % (server_id, vm_timeout),
             2,
         )
         return False
@@ -358,7 +358,7 @@ def main():
     helpers.verbose = argholder.verb
 
     for arg in ["endpoint", "timeout"]:
-        if eval("argholder." + arg) == None:
+        if eval("argholder." + arg) is None:
             argnotspec.append(arg)
 
     if argholder.cert is None and argholder.access_token is None:
@@ -379,10 +379,7 @@ def main():
             "Unknown", "command-line arguments not specified, " + msg_error_args, 3
         )
     else:
-        if (
-            not argholder.endpoint.startswith("http")
-            or not type(argholder.timeout) == int
-        ):
+        if not argholder.endpoint.startswith("http"):
             helpers.nagios_out("Unknown", "command-line arguments are not correct", 3)
         if argholder.cert and not os.path.isfile(argholder.cert):
             helpers.nagios_out("Unknown", "cert file does not exist", 3)
@@ -406,7 +403,7 @@ def main():
                 tenant, last_response
             )
             helpers.debug("Authenticated with OpenID Connect")
-        except helpers.AuthenticationException as e:
+        except helpers.AuthenticationException:
             # just go ahead
             helpers.debug("Authentication with OpenID Connect failed")
     if not ks_token:
@@ -420,7 +417,7 @@ def main():
                     tenant, last_response
                 )
                 helpers.debug("Authenticated with VOMS (Keystone V3)")
-            except helpers.AuthenticationException as e:
+            except helpers.AuthenticationException:
                 helpers.debug("Authentication with VOMS (Keystone V3) failed")
     if not ks_token:
         if argholder.cert:
@@ -433,7 +430,7 @@ def main():
                     tenant, last_response
                 )
                 helpers.debug("Authenticated with VOMS (Keystone V2)")
-            except helpers.AuthenticationException as e:
+            except helpers.AuthenticationException:
                 # no more authentication methods to try, fail here
                 helpers.nagios_out(
                     "Critical", "Unable to authenticate against keystone", 2
@@ -485,15 +482,15 @@ def main():
         ) as e:
             helpers.nagios_out(
                 "Critical",
-                "could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s"
-                % helpers.errmsg_from_excp(e),
+                "could not fetch flavor ID, endpoint does not correctly exposes "
+                "available flavors: %s" % helpers.errmsg_from_excp(e),
                 2,
             )
         except (AssertionError, IndexError, AttributeError) as e:
             helpers.nagios_out(
                 "Critical",
-                "could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s"
-                % str(e),
+                "could not fetch flavor ID, endpoint does not correctly exposes "
+                "available flavors: %s" % str(e),
                 2,
             )
 
@@ -512,7 +509,8 @@ def main():
                     break
             else:
                 helpers.debug(
-                    "No tenant-owned network found, hoping VM creation will still work..."
+                    "No tenant-owned network found, hoping VM creation will "
+                    "still work..."
                 )
         except (
             requests.exceptions.ConnectionError,
