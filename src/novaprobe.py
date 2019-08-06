@@ -14,15 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse, re
-import requests, sys, os, json
-import urlparse
+import argparse
+import json
+import os
 import time
+import urlparse
+
+import requests
 
 from nagios_plugins_fedcloud import helpers
 
-DEFAULT_PORT = 443
-TIMEOUT_CREATE_DELETE = 600
+# time to sleep between status checks
+STATUS_SLEEP_TIME = 2
 SERVER_NAME = "cloudmonprobe-servertest"
 
 
@@ -156,11 +159,11 @@ def get_smaller_flavor_id(nova_url, session):
         helpers.nagios_out("Critical", "Could not fetch flavor ID: %s" % str(e), 2)
 
 
-def wait_for_delete(nova_url, server_id, session):
+def wait_for_delete(nova_url, server_id, vm_timeout, session):
     server_deleted = False
-    i, sleepsec = 0, 1
-    helpers.debug("Check server %s status every %ds:" % (server_id, sleepsec))
-    while i < TIMEOUT_CREATE_DELETE / sleepsec:
+    i = 0
+    helpers.debug("Check server %s status every %ds:" % (server_id, STATUS_SLEEP_TIME))
+    while i < vm_timeout / STATUS_SLEEP_TIME:
         # server status
         try:
             response = session.get(nova_url + "/servers")
@@ -177,10 +180,10 @@ def wait_for_delete(nova_url, server_id, session):
                         break
             if not servfound:
                 server_deleted = True
-                helpers.debug("DELETED", False)
+                helpers.debug("DELETED (Not found)", False)
             if server_deleted:
                 break
-            time.sleep(sleepsec)
+            time.sleep(STATUS_SLEEP_TIME)
         except (
             requests.exceptions.ConnectionError,
             requests.exceptions.Timeout,
@@ -216,18 +219,18 @@ def delete_server(nova_url, server_id, session):
         helpers.nagios_out(
             "Critical",
             "could not execute DELETE server=%s: %s"
-            % (server["id"], helpers.errmsg_from_excp(e)),
+            % (server_id, helpers.errmsg_from_excp(e)),
             2,
         )
 
 
-def clean_up(nova_url, session):
+def clean_up(nova_url, vm_timeout, session):
     try:
         response = session.get(nova_url + "/servers")
         for s in response.json()["servers"]:
             if s["name"] == SERVER_NAME:
                 helpers.debug("Found old server %s, waiting for it" % s["id"])
-                if not wait_for_delete(nova_url, s["id"], session):
+                if not wait_for_delete(nova_url, s["id"], vm_timeout, session):
                     helpers.debug("Old server is still around after timeout, deleting")
                     delete_server(nova_url, s["id"], session)
                     helpers.nagios_out(
@@ -249,10 +252,10 @@ def clean_up(nova_url, session):
         )
 
 
-def wait_for_active(nova_url, server_id, session):
-    i, sleepsec, tss = 0, 1, 3
-    helpers.debug("Check server status every %ds: " % (sleepsec))
-    while i < TIMEOUT_CREATE_DELETE / sleepsec:
+def wait_for_active(nova_url, server_id, vm_timeout, session):
+    i, tss = 0, 3
+    helpers.debug("Check server status every %ds: " % (STATUS_SLEEP_TIME))
+    while i < vm_timeout / STATUS_SLEEP_TIME:
         # server status
         try:
             response = session.get(nova_url + "/servers/%s" % (server_id))
@@ -266,7 +269,7 @@ def wait_for_active(nova_url, server_id, session):
                     "Error from nova: %s" % response.json()["server"].get("fault", "")
                 )
                 return False
-            time.sleep(sleepsec)
+            time.sleep(STATUS_SLEEP_TIME)
         except (
             requests.exceptions.ConnectionError,
             requests.exceptions.Timeout,
@@ -280,7 +283,7 @@ def wait_for_active(nova_url, server_id, session):
                     "Try to fetch server:%s status one more time. Error was %s\n"
                     % (server_id, helpers.errmsg_from_excp(e))
                 )
-                helpers.debug("Check server status every %ds: " % (sleepsec))
+                helpers.debug("Check server status every %ds: " % (STATUS_SLEEP_TIME))
             else:
                 helpers.nagios_out(
                     "Critical",
@@ -292,8 +295,7 @@ def wait_for_active(nova_url, server_id, session):
     else:
         helpers.nagios_out(
             "Critical",
-            "could not create server:%s, timeout:%d exceeded"
-            % (server_id, TIMEOUT_CREATE_DELETE),
+            "could not create server:%s, timeout:%d exceeded" % (server_id, vm_timeout),
             2,
         )
         return False
@@ -343,6 +345,9 @@ def main():
     parser.add_argument("--cert", dest="cert", nargs="?")
     parser.add_argument("--access-token", dest="access_token", nargs="?")
     parser.add_argument("-t", dest="timeout", type=int, nargs="?", default=120)
+    parser.add_argument(
+        "--vm-timeout", dest="vm_timeout", type=int, nargs="?", default=300
+    )
     parser.add_argument("--appdb-image", dest="appdb_img", nargs="?")
     parser.add_argument("--protocol", dest="protocol", default="openid", nargs="?")
     parser.add_argument(
@@ -353,7 +358,7 @@ def main():
     helpers.verbose = argholder.verb
 
     for arg in ["endpoint", "timeout"]:
-        if eval("argholder." + arg) == None:
+        if eval("argholder." + arg) is None:
             argnotspec.append(arg)
 
     if argholder.cert is None and argholder.access_token is None:
@@ -374,10 +379,7 @@ def main():
             "Unknown", "command-line arguments not specified, " + msg_error_args, 3
         )
     else:
-        if (
-            not argholder.endpoint.startswith("http")
-            or not type(argholder.timeout) == int
-        ):
+        if not argholder.endpoint.startswith("http"):
             helpers.nagios_out("Unknown", "command-line arguments are not correct", 3)
         if argholder.cert and not os.path.isfile(argholder.cert):
             helpers.nagios_out("Unknown", "cert file does not exist", 3)
@@ -401,7 +403,7 @@ def main():
                 tenant, last_response
             )
             helpers.debug("Authenticated with OpenID Connect")
-        except helpers.AuthenticationException as e:
+        except helpers.AuthenticationException:
             # just go ahead
             helpers.debug("Authentication with OpenID Connect failed")
     if not ks_token:
@@ -415,7 +417,7 @@ def main():
                     tenant, last_response
                 )
                 helpers.debug("Authenticated with VOMS (Keystone V3)")
-            except helpers.AuthenticationException as e:
+            except helpers.AuthenticationException:
                 helpers.debug("Authentication with VOMS (Keystone V3) failed")
     if not ks_token:
         if argholder.cert:
@@ -428,7 +430,7 @@ def main():
                     tenant, last_response
                 )
                 helpers.debug("Authenticated with VOMS (Keystone V2)")
-            except helpers.AuthenticationException as e:
+            except helpers.AuthenticationException:
                 # no more authentication methods to try, fail here
                 helpers.nagios_out(
                     "Critical", "Unable to authenticate against keystone", 2
@@ -480,15 +482,15 @@ def main():
         ) as e:
             helpers.nagios_out(
                 "Critical",
-                "could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s"
-                % helpers.errmsg_from_excp(e),
+                "could not fetch flavor ID, endpoint does not correctly exposes "
+                "available flavors: %s" % helpers.errmsg_from_excp(e),
                 2,
             )
         except (AssertionError, IndexError, AttributeError) as e:
             helpers.nagios_out(
                 "Critical",
-                "could not fetch flavor ID, endpoint does not correctly exposes available flavors: %s"
-                % str(e),
+                "could not fetch flavor ID, endpoint does not correctly exposes "
+                "available flavors: %s" % str(e),
                 2,
             )
 
@@ -507,7 +509,8 @@ def main():
                     break
             else:
                 helpers.debug(
-                    "No tenant-owned network found, hoping VM creation will still work..."
+                    "No tenant-owned network found, hoping VM creation will "
+                    "still work..."
                 )
         except (
             requests.exceptions.ConnectionError,
@@ -527,12 +530,12 @@ def main():
         helpers.debug("Skipping network discovery as there is no neutron endpoint")
 
     # remove previous servers if found
-    clean_up(nova_url, session)
+    clean_up(nova_url, argholder.vm_timeout, session)
 
     # create server
     st = time.time()
     server_id = create_server(nova_url, image, flavor_id, network_id, session)
-    server_built = wait_for_active(nova_url, server_id, session)
+    server_built = wait_for_active(nova_url, server_id, argholder.vm_timeout, session)
     server_createt = round(time.time() - st, 2)
 
     if server_built:
@@ -541,7 +544,7 @@ def main():
     # server delete
     st = time.time()
     delete_server(nova_url, server_id, session)
-    server_deleted = wait_for_delete(nova_url, server_id, session)
+    server_deleted = wait_for_delete(nova_url, server_id, argholder.vm_timeout, session)
     server_deletet = round(time.time() - st, 2)
     helpers.debug("\nServer=%s deleted in %.2f seconds" % (server_id, server_deletet))
 
