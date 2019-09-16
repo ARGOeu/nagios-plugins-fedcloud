@@ -39,275 +39,399 @@ def debug(msg, newline=True):
         extra_out[-1] = " ".join((extra_out[-1], msg))
 
 
-def get_keystone_oidc_unscoped_token(
-    parsed_url, suffix, timeout, token, identity_provider="egi.eu", protocol="openid"
-):
-    try:
-        auth_url = "/v3/OS-FEDERATION/identity_providers/%s/protocols/%s/auth" % (
-            identity_provider,
-            protocol,
-        )
-        oidc_suffix = suffix + auth_url
+class BaseAuth(object):
+    def __init__(self, host, timeout, **kwargs):
+        self.parsed_url = urlparse(host)
+        self.timeout = timeout
+        if self.parsed_url.scheme != "https":
+            raise AuthenticationException(
+                "Connection error %s - Probe expects HTTPS endpoint"
+                % (self.parsed_url.scheme + "://" + self.parsed_url.netloc)
+            )
+        s = self.parsed_url.path.rstrip("/")
+        if s.endswith("v2.0") or s.endswith("v3"):
+            s = os.path.dirname(s)
+        self.suffix = s.rstrip("/")
 
-        headers = {}
+    def get_unscoped_token(self):
+        raise NotImplementedError
 
-        headers.update({"Authorization": "Bearer " + token})
-        headers.update({"accept": "application/json"})
-        response = requests.post(
-            parsed_url.scheme + "://" + parsed_url.netloc + oidc_suffix,
-            headers=headers,
-            timeout=timeout,
-            verify=True,
-        )
-        response.raise_for_status()
-        return response.headers["X-Subject-Token"]
-    except (KeyError, IndexError) as e:
-        raise AuthenticationException(
-            "Could not fetch unscoped keystone token from response: Key not found %s"
-            % errmsg_from_excp(e)
-        )
-    except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-        raise AuthenticationException(
-            "Connection error %s - %s"
-            % (parsed_url.netloc + oidc_suffix, errmsg_from_excp(e))
-        )
+    def get_ops_tenant(self):
+        raise NotImplementedError
+
+    def get_scoped_token(self):
+        raise NotImplementedError
+
+    def authenticate(self):
+        unscoped_token = self.get_unscoped_token()
+        tenant = self.get_ops_tenant(unscoped_token)
+        return self.get_scoped_token(unscoped_token, tenant)
+
+    def get_info(self):
+        raise NotImplementedError
 
 
-def get_keystone_x509_unscoped_token(
-    parsed_url, suffix, timeout, userca, identity_provider="egi.eu", protocol="mapped"
-):
-    try:
+class BaseV3Auth(BaseAuth):
+    def get_ops_tenant(self, unscoped_token):
+        try:
+            # use unscoped token to get a list of allowed projects mapped to
+            # ops VO from atuh token
+            project_suffix = self.suffix + "/v3/auth/projects"
 
-        auth_url = "/v3/OS-FEDERATION/identity_providers/%s/protocols/%s/auth" % (
-            identity_provider,
-            protocol,
-        )
-        token_suffix = suffix + auth_url
+            headers = {"content-type": "application/json", "accept": "application/json"}
+            headers.update({"x-auth-token": unscoped_token})
+            response = requests.get(
+                self.parsed_url.scheme
+                + "://"
+                + self.parsed_url.netloc
+                + project_suffix,
+                headers=headers,
+                data=None,
+                timeout=self.timeout,
+                verify=True,
+            )
+            response.raise_for_status()
+            projects = response.json()["projects"]
+            project = {}
+            for p in projects:
+                if "ops" in p["name"]:
+                    return p
+            else:
+                # just take one
+                return projects.pop()
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch allowed projects from response: Key not found %s"
+                % errmsg_from_excp(e)
+            )
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.HTTPError,
+        ) as e:
+            raise AuthenticationException(
+                "Connection error %s - %s"
+                % (
+                    self.parsed_url.scheme
+                    + "://"
+                    + self.parsed_url.netloc
+                    + project_suffix,
+                    errmsg_from_excp(e),
+                )
+            )
 
-        headers = {}
-
-        headers.update({"accept": "application/json"})
-
-        response = requests.post(
-            parsed_url.scheme + "://" + parsed_url.netloc + token_suffix,
-            headers=headers,
-            cert=userca,
-            verify=True,
-            timeout=timeout,
-        )
-
-        response.raise_for_status()
-        return response.headers["X-Subject-Token"]
-    except (KeyError, IndexError) as e:
-        raise AuthenticationException(
-            "Could not fetch unscoped keystone token from response: Key not found %s"
-            % errmsg_from_excp(e)
-        )
-    except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-        raise AuthenticationException(
-            "Connection error %s - %s"
-            % (parsed_url.netloc + token_suffix, errmsg_from_excp(e))
-        )
-
-
-def get_keystone_v3_token(unscoped_token_getter, host, timeout, **kwargs):
-    o = urlparse(host)
-    if o.scheme != "https":
-        raise AuthenticationException(
-            "Connection error %s - Probe expects HTTPS endpoint"
-            % (o.scheme + "://" + o.netloc)
-        )
-
-    suffix = o.path.rstrip("/")
-    if suffix.endswith("v2.0") or suffix.endswith("v3"):
-        suffix = os.path.dirname(suffix)
-
-    token = unscoped_token_getter(o, suffix, timeout, **kwargs)
-
-    try:
-        # use unscoped token to get a list of allowed projects mapped to
-        # ops VO from atuh token
-        project_suffix = suffix + "/v3/auth/projects"
-
-        headers = {"content-type": "application/json", "accept": "application/json"}
-        headers.update({"x-auth-token": token})
-        response = requests.get(
-            o.scheme + "://" + o.netloc + project_suffix,
-            headers=headers,
-            data=None,
-            timeout=timeout,
-            verify=True,
-        )
-        response.raise_for_status()
-        projects = response.json()["projects"]
-        project = {}
-        for p in projects:
-            if "ops" in p["name"]:
-                project = p
-                break
-        else:
-            # just take one
-            project = projects.pop()
-    except (KeyError, IndexError) as e:
-        raise AuthenticationException(
-            "Could not fetch allowed projects from response: Key not found %s"
-            % errmsg_from_excp(e)
-        )
-    except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-        raise AuthenticationException(
-            "Connection error %s - %s"
-            % (o.scheme + "://" + o.netloc + project_suffix, errmsg_from_excp(e))
-        )
-
-    try:
-        # get scoped token for allowed project
-        token_suffix = suffix + "/v3/auth/tokens"
-        headers = {"content-type": "application/json", "accept": "application/json"}
-        payload = {
-            "auth": {
-                "identity": {"methods": ["token"], "token": {"id": token}},
-                "scope": {"project": {"id": project["id"]}},
+    def get_scoped_token(self, unscoped_token, project):
+        try:
+            # get scoped token for allowed project
+            token_suffix = self.suffix + "/v3/auth/tokens"
+            headers = {"content-type": "application/json", "accept": "application/json"}
+            payload = {
+                "auth": {
+                    "identity": {"methods": ["token"], "token": {"id": unscoped_token}},
+                    "scope": {"project": {"id": project["id"]}},
+                }
             }
-        }
-        response = requests.post(
-            o.scheme + "://" + o.netloc + token_suffix,
-            headers=headers,
-            data=json.dumps(payload),
-            verify=True,
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        token = response.headers["X-Subject-Token"]
-    except (KeyError, IndexError) as e:
-        raise AuthenticationException(
-            "Could not fetch scoped keystone token for %s from "
-            "response: Key not found %s" % (project, errmsg_from_excp(e))
-        )
-    except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-        raise AuthenticationException(
-            "Connection error %s - %s"
-            % (o.scheme + "://" + o.netloc + token_suffix, errmsg_from_excp(e))
-        )
+            self.token_response = requests.post(
+                self.parsed_url.scheme + "://" + self.parsed_url.netloc + token_suffix,
+                headers=headers,
+                data=json.dumps(payload),
+                verify=True,
+                timeout=self.timeout,
+            )
+            self.token_response.raise_for_status()
+            return self.token_response.headers["X-Subject-Token"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch scoped keystone token for %s from "
+                "response: Key not found %s" % (project, errmsg_from_excp(e))
+            )
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.HTTPError,
+        ) as e:
+            raise AuthenticationException(
+                "Connection error %s - %s"
+                % (
+                    self.parsed_url.scheme
+                    + "://"
+                    + self.parsed_url.netloc
+                    + token_suffix,
+                    errmsg_from_excp(e),
+                )
+            )
 
-    return token, project, response
+    def get_info(self):
+        try:
+            tenant_id = self.token_response.json()["token"]["project"]["id"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch id for tenant %s: %s" % (tenant, errmsg_from_excp(e))
+            )
+        try:
+            service_catalog = self.token_response.json()["token"]["catalog"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch service catalogue %s" % errmsg_from_excp(e)
+            )
+        r = dict(compute=None, image=None, network=None)
+        try:
+            for e in service_catalog:
+                if e["type"] in r:
+                    for ep in e["endpoints"]:
+                        if ep["interface"] == "public":
+                            r[e["type"]] = ep["url"]
+            assert r["compute"] and r["image"]
+        except (KeyError, IndexError, AssertionError) as e:
+            raise AuthenticationException(
+                "Could not fetch service URL: %s" % errmsg_from_excp(e)
+            )
+        return tenant_id, r["compute"], r["image"], r["network"]
 
 
-def get_keystone_token_oidc_v3(host, timeout, **kwargs):
-    return get_keystone_v3_token(
-        get_keystone_oidc_unscoped_token, host, timeout, **kwargs
-    )
+class OIDCAuth(BaseV3Auth):
+    name = "OpenID Connect"
+
+    def __init__(
+        self, host, timeout, identity_provider="egi.eu", access_token="", **kwargs
+    ):
+        super(OIDCAuth, self).__init__(host, timeout, **kwargs)
+        self.identity_provider = identity_provider
+        self.access_token = access_token
+
+    def get_unscoped_token(self):
+        for p in ["openid", "oidc"]:
+            try:
+                debug("TEST %s" % p)
+                return self._get_unscoped_token_with_protocol(p)
+            except AuthenticationException as e:
+                debug("OIDC Auth failed with protocol %s (%s)" % (p, e))
+        raise AuthenticationException("Unable to authenticate")
+
+    def _get_unscoped_token_with_protocol(self, protocol):
+        try:
+            auth_url = "/v3/OS-FEDERATION/identity_providers/%s/protocols/%s/auth" % (
+                self.identity_provider,
+                protocol,
+            )
+            oidc_suffix = self.suffix + auth_url
+
+            headers = {}
+            headers.update({"Authorization": "Bearer " + self.access_token})
+            headers.update({"accept": "application/json"})
+            response = requests.post(
+                self.parsed_url.scheme + "://" + self.parsed_url.netloc + oidc_suffix,
+                headers=headers,
+                timeout=self.timeout,
+                verify=True,
+            )
+            response.raise_for_status()
+            return response.headers["X-Subject-Token"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch unscoped keystone token from response: %s"
+                % errmsg_from_excp(e)
+            )
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.HTTPError,
+        ) as e:
+            raise AuthenticationException(
+                "Connection error %s - %s"
+                % (self.parsed_url.netloc + oidc_suffix, errmsg_from_excp(e))
+            )
 
 
-def get_keystone_token_x509_v3(host, timeout, **kwargs):
-    return get_keystone_v3_token(
-        get_keystone_x509_unscoped_token, host, timeout, **kwargs
-    )
+class X509V3Auth(BaseV3Auth):
+    name = "VOMS Keystone-V3"
+
+    def __init__(self, host, timeout, identity_provider="egi.eu", userca="", **kwargs):
+        super(X509V3Auth, self).__init__(host, timeout, **kwargs)
+        self.identity_provider = identity_provider
+        self.protocol = "mapped"
+        self.userca = userca
+
+    def get_unscoped_token(self):
+        try:
+            auth_url = "/v3/OS-FEDERATION/identity_providers/%s/protocols/%s/auth" % (
+                self.identity_provider,
+                self.protocol,
+            )
+            token_suffix = self.suffix + auth_url
+
+            headers = {}
+            headers.update({"accept": "application/json"})
+
+            response = requests.post(
+                self.parsed_url.scheme + "://" + self.parsed_url.netloc + token_suffix,
+                headers=headers,
+                cert=self.userca,
+                verify=True,
+                timeout=self.timeout,
+            )
+
+            response.raise_for_status()
+            return response.headers["X-Subject-Token"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch unscoped keystone token from response: Key not found %s"
+                % errmsg_from_excp(e)
+            )
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.HTTPError,
+        ) as e:
+            raise AuthenticationException(
+                "Connection error %s - %s"
+                % (self.parsed_url.netloc + token_suffix, errmsg_from_excp(e))
+            )
 
 
-def get_keystone_token_x509_v2(host, timeout, userca=None):
-    o = urlparse(host)
-    if o.scheme != "https":
-        raise AuthenticationException(
-            "Connection error %s - Probe expects HTTPS endpoint"
-            % (o.scheme + "://" + o.netloc)
-        )
+class X509V2Auth(BaseAuth):
+    name = "Keystone-VOMS"
 
-    suffix = o.path.rstrip("/")
-    if suffix.endswith("v2.0") or suffix.endswith("v3"):
-        suffix = os.path.dirname(suffix)
-    suffix = suffix.rstrip("/")
+    def __init__(self, host, timeout, userca="", **kwargs):
+        super(X509V2Auth, self).__init__(host, timeout, **kwargs)
+        self.userca = userca
 
-    try:
-        # fetch unscoped token
-        token_suffix = suffix + "/v2.0/tokens"
+    def get_unscoped_token(self):
+        try:
+            # fetch unscoped token
+            token_suffix = self.suffix + "/v2.0/tokens"
 
-        headers, payload, token = {}, {}, None
-        headers.update({"Accept": "*/*"})
+            headers, payload, token = {}, {}, None
+            headers.update({"Accept": "*/*"})
 
-        headers = {"content-type": "application/json", "accept": "application/json"}
-        payload = {"auth": {"voms": True}}
-        response = requests.post(
-            o.scheme + "://" + o.netloc + token_suffix,
-            headers=headers,
-            data=json.dumps(payload),
-            cert=userca,
-            verify=True,
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        token = response.json()["access"]["token"]["id"]
-    except (KeyError, IndexError) as e:
-        raise AuthenticationException(
-            "Could not fetch unscoped keystone token from response: Key not found %s"
-            % errmsg_from_excp(e)
-        )
-    except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-        raise AuthenticationException(
-            "Connection error %s - %s" % (o.netloc + token_suffix, errmsg_from_excp(e))
-        )
+            headers = {"content-type": "application/json", "accept": "application/json"}
+            payload = {"auth": {"voms": True}}
+            response = requests.post(
+                self.parsed_url.scheme + "://" + self.parsed_url.netloc + token_suffix,
+                headers=headers,
+                data=json.dumps(payload),
+                cert=self.userca,
+                verify=True,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.json()["access"]["token"]["id"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch unscoped keystone token from response: Key not found %s"
+                % errmsg_from_excp(e)
+            )
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.HTTPError,
+        ) as e:
+            raise AuthenticationException(
+                "Connection error %s - %s"
+                % (self.parsed_url.netloc + token_suffix, errmsg_from_excp(e))
+            )
 
-    try:
-        # use unscoped token to get a list of allowed tenants mapped to
-        # ops VO from VOMS proxy cert
-        tenant_suffix = suffix + "/v2.0/tenants"
+    def get_ops_tenant(self, token):
+        try:
+            # use unscoped token to get a list of allowed tenants mapped to
+            # ops VO from VOMS proxy cert
+            tenant_suffix = self.suffix + "/v2.0/tenants"
 
-        headers = {"content-type": "application/json", "accept": "application/json"}
-        headers.update({"x-auth-token": token})
-        response = requests.get(
-            o.scheme + "://" + o.netloc + tenant_suffix,
-            headers=headers,
-            data=None,
-            cert=userca,
-            verify=True,
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        tenants = response.json()["tenants"]
-        tenant = ""
-        for t in tenants:
-            if "ops" in t["name"]:
-                tenant = t["name"]
-                break
-        else:
-            # just take one
-            tenant = tenants.pop()["name"]
-    except (KeyError, IndexError) as e:
-        raise AuthenticationException(
-            "Could not fetch allowed tenants from response: Key not found %s"
-            % errmsg_from_excp(e)
-        )
-    except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-        raise AuthenticationException(
-            "Connection error %s - %s"
-            % (o.scheme + "://" + o.netloc + tenant_suffix, errmsg_from_excp(e))
-        )
+            headers = {"content-type": "application/json", "accept": "application/json"}
+            headers.update({"x-auth-token": token})
+            response = requests.get(
+                self.parsed_url.scheme + "://" + self.parsed_url.netloc + tenant_suffix,
+                headers=headers,
+                data=None,
+                cert=self.userca,
+                verify=True,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            tenants = response.json()["tenants"]
+            tenant = ""
+            for t in tenants:
+                if "ops" in t["name"]:
+                    return t["name"]
+            else:
+                # just take one
+                return tenants.pop()["name"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch allowed tenants from response: Key not found %s"
+                % errmsg_from_excp(e)
+            )
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.HTTPError,
+        ) as e:
+            raise AuthenticationException(
+                "Connection error %s - %s"
+                % (
+                    self.parsed_url.scheme
+                    + "://"
+                    + self.parsed_url.netloc
+                    + tenant_suffix,
+                    errmsg_from_excp(e),
+                )
+            )
 
-    try:
-        # get scoped token for allowed tenant
-        headers = {"content-type": "application/json", "accept": "application/json"}
-        payload = {"auth": {"voms": True, "tenantName": tenant}}
-        response = requests.post(
-            o.scheme + "://" + o.netloc + token_suffix,
-            headers=headers,
-            data=json.dumps(payload),
-            cert=userca,
-            verify=True,
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        token = response.json()["access"]["token"]["id"]
-    except (KeyError, IndexError) as e:
-        raise AuthenticationException(
-            "Could not fetch scoped keystone token for %s from "
-            "response: Key not found %s" % (tenant, errmsg_from_excp(e))
-        )
-    except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
-        raise AuthenticationException(
-            "Connection error %s - %s"
-            % (o.scheme + "://" + o.netloc + token_suffix, errmsg_from_excp(e))
-        )
+    def get_scoped_token(self, unscoped_token, tenant):
+        try:
+            token_suffix = self.suffix + "/v2.0/tokens"
+            # get scoped token for allowed tenant
+            headers = {"content-type": "application/json", "accept": "application/json"}
+            payload = {"auth": {"voms": True, "tenantName": tenant}}
+            self.token_response = requests.post(
+                self.parsed_url.scheme + "://" + self.parsed_url.netloc + token_suffix,
+                headers=headers,
+                data=json.dumps(payload),
+                cert=self.userca,
+                verify=True,
+                timeout=self.timeout,
+            )
+            self.token_response.raise_for_status()
+            return self.token_response.json()["access"]["token"]["id"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch scoped keystone token for %s from "
+                "response: Key not found %s" % (tenant, errmsg_from_excp(e))
+            )
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.HTTPError,
+        ) as e:
+            raise AuthenticationException(
+                "Connection error %s - %s"
+                % (
+                    self.parsed_url.scheme
+                    + "://"
+                    + self.parsed_url.netloc
+                    + token_suffix,
+                    errmsg_from_excp(e),
+                )
+            )
 
-    return token, tenant, response
+    def get_info(self):
+        try:
+            tenant_id = self.token_response.json()["access"]["token"]["tenant"]["id"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch id for tenant %s: %s" % (tenant, errmsg_from_excp(e))
+            )
+        try:
+            service_catalog = self.token_response.json()["access"]["serviceCatalog"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch service catalog: %s" % (errmsg_from_excp(e))
+            )
+        r = dict(compute=None, image=None, network=None)
+        try:
+            for e in service_catalog:
+                if e["type"] in r:
+                    r[e["type"]] = e["endpoints"][0]["publicURL"]
+            assert r["compute"] and r["image"]
+        except (KeyError, IndexError, AssertionError) as e:
+            raise AuthenticationException(
+                "Could not fetch service URL: %s" % (errmsg_from_excp(e))
+            )
+
+        return tenant_id, r["compute"], r["image"], r["network"]
 
 
 def errmsg_from_excp(e, level=5):

@@ -29,80 +29,6 @@ STATUS_SLEEP_TIME = 2
 SERVER_NAME = "cloudmonprobe-servertest"
 
 
-def get_info_v3(tenant, last_response):
-    try:
-        tenant_id = last_response.json()["token"]["project"]["id"]
-    except (KeyError, IndexError) as e:
-        helpers.nagios_out(
-            "Critical",
-            "Could not fetch id for tenant %s: %s"
-            % (tenant, helpers.errmsg_from_excp(e)),
-            2,
-        )
-
-    try:
-        service_catalog = last_response.json()["token"]["catalog"]
-    except (KeyError, IndexError) as e:
-        helpers.nagios_out(
-            "Critical",
-            "Could not fetch service catalog: %s" % (helpers.errmsg_from_excp(e)),
-            2,
-        )
-
-    r = dict(compute=None, image=None, network=None)
-
-    try:
-        for e in service_catalog:
-            if e["type"] in r:
-                for ep in e["endpoints"]:
-                    if ep["interface"] == "public":
-                        r[e["type"]] = ep["url"]
-        assert r["compute"] and r["image"]
-    except (KeyError, IndexError, AssertionError) as e:
-        helpers.nagios_out(
-            "Critical",
-            "Could not fetch service URL: %s" % (helpers.errmsg_from_excp(e)),
-            2,
-        )
-
-    return tenant_id, r["compute"], r["image"], r["network"]
-
-
-def get_info_v2(tenant, last_response):
-    try:
-        tenant_id = last_response.json()["access"]["token"]["tenant"]["id"]
-    except (KeyError, IndexError) as e:
-        helpers.nagios_out(
-            "Critical",
-            "Could not fetch id for tenant %s: %s"
-            % (tenant, helpers.errmsg_from_excp(e)),
-            2,
-        )
-
-    try:
-        service_catalog = last_response.json()["access"]["serviceCatalog"]
-    except (KeyError, IndexError) as e:
-        helpers.nagios_out(
-            "Critical",
-            "Could not fetch service catalog: %s" % (helpers.errmsg_from_excp(e)),
-        )
-
-    r = dict(compute=None, image=None, network=None)
-
-    try:
-        for e in service_catalog:
-            if e["type"] in r:
-                r[e["type"]] = e["endpoints"][0]["publicURL"]
-        assert r["compute"] and r["image"]
-    except (KeyError, IndexError, AssertionError) as e:
-        helpers.nagios_out(
-            "Critical",
-            "Could not fetch service URL: %s" % (helpers.errmsg_from_excp(e)),
-        )
-
-    return tenant_id, r["compute"], r["image"], r["network"]
-
-
 def get_image_id(glance_url, appdb_id, session):
     next_url = "v2/images"
     try:
@@ -349,7 +275,6 @@ def main():
         "--vm-timeout", dest="vm_timeout", type=int, nargs="?", default=300
     )
     parser.add_argument("--appdb-image", dest="appdb_img", nargs="?")
-    parser.add_argument("--protocol", dest="protocol", default="openid", nargs="?")
     parser.add_argument(
         "--identity-provider", dest="identity_provider", default="egi.eu", nargs="?"
     )
@@ -387,57 +312,30 @@ def main():
             helpers.nagios_out("Unknown", "access-token file does not exist", 3)
 
     ks_token = None
+    access_token = None
     if argholder.access_token:
         access_file = open(argholder.access_token, "r")
         access_token = access_file.read().rstrip("\n")
         access_file.close()
+
+    for auth_class in [helpers.OIDCAuth, helpers.X509V3Auth, helpers.X509V2Auth]:
         try:
-            ks_token, tenant, last_response = helpers.get_keystone_token_oidc_v3(
+            auth = auth_class(
                 argholder.endpoint,
                 argholder.timeout,
-                token=access_token,
+                access_token=access_token,
                 identity_provider=argholder.identity_provider,
-                protocol=argholder.protocol,
+                userca=argholder.cert,
             )
-            tenant_id, nova_url, glance_url, neutron_url = get_info_v3(
-                tenant, last_response
-            )
-            helpers.debug("Authenticated with OpenID Connect")
+            ks_token = auth.authenticate()
+            tenant_id, nova_url, glance_url, neutron_url = auth.get_info()
+            helpers.debug("Authenticated with %s" % auth_class.name)
+            break
         except helpers.AuthenticationException:
             # just go ahead
-            helpers.debug("Authentication with OpenID Connect failed")
-    if not ks_token:
-        if argholder.cert:
-            # try with certificate v3
-            try:
-                ks_token, tenant, last_response = helpers.get_keystone_token_x509_v3(
-                    argholder.endpoint, argholder.timeout, userca=argholder.cert
-                )
-                tenant_id, nova_url, glance_url, neutron_url = get_info_v3(
-                    tenant, last_response
-                )
-                helpers.debug("Authenticated with VOMS (Keystone V3)")
-            except helpers.AuthenticationException:
-                helpers.debug("Authentication with VOMS (Keystone V3) failed")
-    if not ks_token:
-        if argholder.cert:
-            # try with certificate v2
-            try:
-                ks_token, tenant, last_response = helpers.get_keystone_token_x509_v2(
-                    argholder.endpoint, argholder.timeout, userca=argholder.cert
-                )
-                tenant_id, nova_url, glance_url, neutron_url = get_info_v2(
-                    tenant, last_response
-                )
-                helpers.debug("Authenticated with VOMS (Keystone V2)")
-            except helpers.AuthenticationException:
-                # no more authentication methods to try, fail here
-                helpers.nagios_out(
-                    "Critical", "Unable to authenticate against keystone", 2
-                )
-        else:
-            # just fail
-            helpers.nagios_out("Critical", "Unable to authenticate against Keystone", 2)
+            helpers.debug("Authentication with %s failed" % auth_class.name)
+    else:
+        helpers.nagios_out("Critical", "Unable to authenticate against Keystone", 2)
 
     helpers.debug("Endpoint: %s" % (argholder.endpoint))
     helpers.debug("Auth token (cut to 64 chars): %.64s" % ks_token)
