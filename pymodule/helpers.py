@@ -80,19 +80,14 @@ class BaseV3Auth(BaseAuth):
 
             headers = {"content-type": "application/json", "accept": "application/json"}
             headers.update({"x-auth-token": unscoped_token})
+            url = (
+                self.parsed_url.scheme + "://" + self.parsed_url.netloc + project_suffix
+            )
             response = requests.get(
-                self.parsed_url.scheme
-                + "://"
-                + self.parsed_url.netloc
-                + project_suffix,
-                headers=headers,
-                data=None,
-                timeout=self.timeout,
-                verify=True,
+                url, headers=headers, data=None, timeout=self.timeout, verify=True
             )
             response.raise_for_status()
             projects = response.json()["projects"]
-            project = {}
             for p in projects:
                 if "ops" in p["name"]:
                     return p
@@ -109,14 +104,7 @@ class BaseV3Auth(BaseAuth):
             requests.exceptions.HTTPError,
         ) as e:
             raise AuthenticationException(
-                "Connection error %s - %s"
-                % (
-                    self.parsed_url.scheme
-                    + "://"
-                    + self.parsed_url.netloc
-                    + project_suffix,
-                    errmsg_from_excp(e),
-                )
+                "Connection error %s - %s" % (url, errmsg_from_excp(e))
             )
 
     def get_scoped_token(self, unscoped_token, project):
@@ -130,8 +118,9 @@ class BaseV3Auth(BaseAuth):
                     "scope": {"project": {"id": project["id"]}},
                 }
             }
+            url = self.parsed_url.scheme + "://" + self.parsed_url.netloc + token_suffix
             self.token_response = requests.post(
-                self.parsed_url.scheme + "://" + self.parsed_url.netloc + token_suffix,
+                url,
                 headers=headers,
                 data=json.dumps(payload),
                 verify=True,
@@ -149,14 +138,7 @@ class BaseV3Auth(BaseAuth):
             requests.exceptions.HTTPError,
         ) as e:
             raise AuthenticationException(
-                "Connection error %s - %s"
-                % (
-                    self.parsed_url.scheme
-                    + "://"
-                    + self.parsed_url.netloc
-                    + token_suffix,
-                    errmsg_from_excp(e),
-                )
+                "Connection error %s - %s" % (url, errmsg_from_excp(e))
             )
 
     def get_info(self):
@@ -164,7 +146,7 @@ class BaseV3Auth(BaseAuth):
             tenant_id = self.token_response.json()["token"]["project"]["id"]
         except (KeyError, IndexError) as e:
             raise AuthenticationException(
-                "Could not fetch id for tenant %s: %s" % (tenant, errmsg_from_excp(e))
+                "Could not fetch id for project: %s" % errmsg_from_excp(e)
             )
         try:
             service_catalog = self.token_response.json()["token"]["catalog"]
@@ -272,7 +254,7 @@ class X509V3Auth(BaseV3Auth):
             return response.headers["X-Subject-Token"]
         except (KeyError, IndexError) as e:
             raise AuthenticationException(
-                "Could not fetch unscoped keystone token from response: Key not found %s"
+                "Could not fetch unscoped keystone token from response: %s"
                 % errmsg_from_excp(e)
             )
         except (
@@ -297,7 +279,7 @@ class X509V2Auth(BaseAuth):
             # fetch unscoped token
             token_suffix = self.suffix + "/v2.0/tokens"
 
-            headers, payload, token = {}, {}, None
+            headers, payload = {}, {}
             headers.update({"Accept": "*/*"})
 
             headers = {"content-type": "application/json", "accept": "application/json"}
@@ -314,7 +296,7 @@ class X509V2Auth(BaseAuth):
             return response.json()["access"]["token"]["id"]
         except (KeyError, IndexError) as e:
             raise AuthenticationException(
-                "Could not fetch unscoped keystone token from response: Key not found %s"
+                "Could not fetch unscoped keystone token from response: %s"
                 % errmsg_from_excp(e)
             )
         except (
@@ -334,8 +316,11 @@ class X509V2Auth(BaseAuth):
 
             headers = {"content-type": "application/json", "accept": "application/json"}
             headers.update({"x-auth-token": token})
+            url = (
+                self.parsed_url.scheme + "://" + self.parsed_url.netloc + tenant_suffix
+            )
             response = requests.get(
-                self.parsed_url.scheme + "://" + self.parsed_url.netloc + tenant_suffix,
+                url,
                 headers=headers,
                 data=None,
                 cert=self.userca,
@@ -344,7 +329,6 @@ class X509V2Auth(BaseAuth):
             )
             response.raise_for_status()
             tenants = response.json()["tenants"]
-            tenant = ""
             for t in tenants:
                 if "ops" in t["name"]:
                     return t["name"]
@@ -361,14 +345,7 @@ class X509V2Auth(BaseAuth):
             requests.exceptions.HTTPError,
         ) as e:
             raise AuthenticationException(
-                "Connection error %s - %s"
-                % (
-                    self.parsed_url.scheme
-                    + "://"
-                    + self.parsed_url.netloc
-                    + tenant_suffix,
-                    errmsg_from_excp(e),
-                )
+                "Connection error %s - %s" % (url, errmsg_from_excp(e))
             )
 
     def get_scoped_token(self, unscoped_token, tenant):
@@ -377,8 +354,9 @@ class X509V2Auth(BaseAuth):
             # get scoped token for allowed tenant
             headers = {"content-type": "application/json", "accept": "application/json"}
             payload = {"auth": {"voms": True, "tenantName": tenant}}
+            url = self.parsed_url.scheme + "://" + self.parsed_url.netloc + token_suffix
             self.token_response = requests.post(
-                self.parsed_url.scheme + "://" + self.parsed_url.netloc + token_suffix,
+                url,
                 headers=headers,
                 data=json.dumps(payload),
                 cert=self.userca,
@@ -397,14 +375,7 @@ class X509V2Auth(BaseAuth):
             requests.exceptions.HTTPError,
         ) as e:
             raise AuthenticationException(
-                "Connection error %s - %s"
-                % (
-                    self.parsed_url.scheme
-                    + "://"
-                    + self.parsed_url.netloc
-                    + token_suffix,
-                    errmsg_from_excp(e),
-                )
+                "Connection error %s - %s" % (url, errmsg_from_excp(e))
             )
 
     def get_info(self):
@@ -412,7 +383,7 @@ class X509V2Auth(BaseAuth):
             tenant_id = self.token_response.json()["access"]["token"]["tenant"]["id"]
         except (KeyError, IndexError) as e:
             raise AuthenticationException(
-                "Could not fetch id for tenant %s: %s" % (tenant, errmsg_from_excp(e))
+                "Could not fetch id for tenant: %s" % errmsg_from_excp(e)
             )
         try:
             service_catalog = self.token_response.json()["access"]["serviceCatalog"]
