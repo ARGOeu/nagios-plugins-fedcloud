@@ -39,6 +39,9 @@ def get_image_id(glance_url, appdb_id, session):
             response = session.get(images_url)
             response.raise_for_status()
             for img in response.json()["images"]:
+                if img.get("ad:appid", "") == appdb_id:
+                    return img["id"]
+                # TODO: this is to be deprecated as sites move to newer cloudkeeper
                 attrs = json.loads(img.get("APPLIANCE_ATTRIBUTES", "{}"))
                 if attrs.get("ad:appid", "") == appdb_id:
                     return img["id"]
