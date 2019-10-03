@@ -4,7 +4,7 @@
 
 Summary: Nagios plugins for EGI FedCloud services
 Name: nagios-plugins-fedcloud
-Version: 0.4.0
+Version: 0.5.0
 Release: 1%{?dist}
 License: ASL 2.0
 Group: Network/Monitoring
@@ -42,6 +42,9 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
+* Thu Oct 3 2019 Emir Imamagic <eimamagi@srce.hr> - 0.5.0-1%{?dist}
+- Support for new version of cloudkeeper
+- Refactor authentication
 * Thu Sep 5 2019 Emir Imamagic <eimamagi@srce.hr> - 0.4.0-1%{?dist}
 - Reduce default timeout for VMs to 300s
 - Clean leftover VMs
