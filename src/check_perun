@@ -22,7 +22,7 @@ KEY_PATH=/etc/nagios/globus/robokey.pem
 if [ "x$1" != "x" ]; then
   PERUN_URL_BASE=$1
 else
-  PERUN_URL_BASE=https://perun.cesnet.cz/cert/rpc/
+  PERUN_URL_BASE=https://perun.egi.eu/cert/rpc/
 fi
 
 # Query Perun RPC
