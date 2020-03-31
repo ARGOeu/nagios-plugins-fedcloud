@@ -2,20 +2,25 @@
 %{!?python_sitelib: %global python_sitelib %(%{__python} -c "from distutils.sysconfig import get_python_lib; print get_python_lib()")}
 %define dir /usr/libexec/argo-monitoring/probes/fedcloud
 
-Summary: Nagios plugins for EGI FedCloud services
-Name: nagios-plugins-fedcloud
-Version: 0.5.0
-Release: 1%{?dist}
-License: ASL 2.0
-Group: Network/Monitoring
-Source0: %{name}-%{version}.tar.gz
+Summary:   Nagios plugins for EGI FedCloud services
+Name:      nagios-plugins-fedcloud
+Version:   0.5.0
+Release:   1%{?dist}
+License:   ASL 2.0
+Group:     Network/Monitoring
+Source0:   %{name}-%{version}.tar.gz
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
 BuildArch: noarch
-Requires: python >= 2.6
-Requires: python-argparse
-Requires: python-requests
-Requires: python2-ndg_httpsclient
+Requires:  python >= 2.6
+Requires:  python-requests
 %description
+
+%if 0%{?el7:1}
+Requires:       python-ndg_httpsclient
+%else
+Requires:       python2-ndg_httpsclient
+Requires:       python-argparse
+%endif
 
 %prep
 %setup -q
