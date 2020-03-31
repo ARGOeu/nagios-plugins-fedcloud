@@ -4,7 +4,7 @@
 
 Summary:   Nagios plugins for EGI FedCloud services
 Name:      nagios-plugins-fedcloud
-Version:   0.5.0
+Version:   0.5.1
 Release:   1%{?dist}
 License:   ASL 2.0
 Group:     Network/Monitoring
@@ -47,6 +47,10 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
+* Tue Mar 31 2020 Daniel Vrcic <dvrcic@srce.hr> - 0.5.1-1%{?dist}
+- Fix perun.cesnet.cz address
+- Add EOSC-hub acknowledgement
+- vary spec dependency according to Centos version 
 * Thu Oct 3 2019 Emir Imamagic <eimamagi@srce.hr> - 0.5.0-1%{?dist}
 - Support for new version of cloudkeeper
 - Refactor authentication
