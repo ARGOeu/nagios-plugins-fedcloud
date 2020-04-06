@@ -70,6 +70,9 @@ class BaseAuth(object):
     def get_info(self):
         raise NotImplementedError
 
+    def get_swift_endpoint(self):
+        raise NotImplementedError
+
 
 class BaseV3Auth(BaseAuth):
     def get_ops_tenant(self, unscoped_token):
@@ -167,6 +170,38 @@ class BaseV3Auth(BaseAuth):
                 "Could not fetch service URL: %s" % errmsg_from_excp(e)
             )
         return tenant_id, r["compute"], r["image"], r["network"]
+
+    def get_swift_endpoint(self):
+        try:
+            tenant_id = self.token_response.json()["token"]["project"]["id"]
+
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch id for project: %s" % errmsg_from_excp(e)
+            )
+
+        try:
+            service_catalog = self.token_response.json()["token"]["catalog"]
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch service catalogue: %s" % errmsg_from_excp(e)
+            )
+
+        try:
+            for e in service_catalog:
+                if e["type"] == "object-store":
+                    for ep in e["endpoints"]:
+                        if ep["interface"] == "public":
+                            swift_endpoint = ep["url"]
+
+            assert swift_endpoint
+
+        except (KeyError, IndexError, AssertionError) as e:
+            raise AuthenticationException(
+                "Could not fetch swift URL: %s" % errmsg_from_excp(e)
+            )
+
+        return tenant_id, swift_endpoint
 
 
 class OIDCAuth(BaseV3Auth):
@@ -403,6 +438,39 @@ class X509V2Auth(BaseAuth):
             )
 
         return tenant_id, r["compute"], r["image"], r["network"]
+
+    def get_swift_endpoint(self):
+        try:
+            tenant_id = \
+                self.token_response.json()["access"]["token"]["tenant"]["id"]
+
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch id for tenant: %s" % errmsg_from_excp(e)
+            )
+
+        try:
+            service_catalog = \
+                self.token_response.json()["access"]["serviceCatalog"]
+
+        except (KeyError, IndexError) as e:
+            raise AuthenticationException(
+                "Could not fetch service catalog: %s" % errmsg_from_excp(e)
+            )
+
+        try:
+            for e in service_catalog:
+                if e["type"] == "object-store":
+                    swift_endpoint = e["endpoints"][0]["publicURL"]
+
+            assert swift_endpoint
+
+        except (KeyError, IndexError, AssertionError) as e:
+            raise AuthenticationException(
+                "Could not fetch swift URL: %s" % errmsg_from_excp(e)
+            )
+
+        return tenant_id, swift_endpoint
 
 
 def errmsg_from_excp(e, level=5):
