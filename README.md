@@ -4,8 +4,8 @@ This package includes probes for EGI FedCloud services.
 
 Currently it supports the following tests:
  - AppDB workflow
- - CDMI
  - Openstack Nova
+ - OpenStack Swift
  - FedCloud Accounting Freshness
  - OCCI compute create
  - Perun
