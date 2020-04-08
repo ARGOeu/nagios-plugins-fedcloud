@@ -4,7 +4,7 @@
 
 Summary:   Nagios plugins for EGI FedCloud services
 Name:      nagios-plugins-fedcloud
-Version:   0.5.1
+Version:   0.5.2
 Release:   1%{?dist}
 License:   ASL 2.0
 Group:     Network/Monitoring
@@ -47,10 +47,12 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
+* Wed Apr 8 2020 Katarina Zailac <kzailac@srce.hr> - 0.5.2-1%{?dist}
+- Add swiftprobe.py
 * Tue Mar 31 2020 Daniel Vrcic <dvrcic@srce.hr> - 0.5.1-1%{?dist}
 - Fix perun.cesnet.cz address
 - Add EOSC-hub acknowledgement
-- vary spec dependency according to Centos version 
+- vary spec dependency according to Centos version
 * Thu Oct 3 2019 Emir Imamagic <eimamagi@srce.hr> - 0.5.0-1%{?dist}
 - Support for new version of cloudkeeper
 - Refactor authentication
@@ -68,7 +70,7 @@ rm -rf $RPM_BUILD_ROOT
 - Add support for Keystone V3
 - Add support for using AppDB image in openstack probe
 * Fri Dec 8 2017 Daniel Vrcic <dvrcic@srce.hr> - 0.1.7-1%{?dist}
-- graceful clean-up for OCCI compute probe  
+- graceful clean-up for OCCI compute probe
 * Mon Nov 20 2017 Daniel Vrcic <dvrcic@srce.hr> - 0.1.6-1%{?dist}
 - novaprobe: remove hardcoded port check in token suffix
 - novaprobe: ARGO-948 Access token parameter should be file
@@ -78,18 +80,18 @@ rm -rf $RPM_BUILD_ROOT
 * Thu Apr 6 2017 Emir Imamagic <eimamagi@srce.hr> - 0.1.4-1%{?dist}
 - Version bump
 * Tue Dec 13 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.3-1%{?dist}
-- refactored keystone token and cert check code 
+- refactored keystone token and cert check code
 * Tue Nov 22 2016 Emir Imamagic <eimamagi@srce.hr> - 0.1.1-7%{?dist}
 - Probes location aligned with guidelines
 * Fri May 13 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-6%{?dist}
-- cdmiprobe: add support for printing error msgs from packed exceptions 
+- cdmiprobe: add support for printing error msgs from packed exceptions
 - cdmiprobe: wait some time before next operation
 - cdmiprobe: fetched token implies that we have supported CDMI Specification version
 - cdmiprobe: merged improvements with proper cleanup procedure by Enol Fernandez
 * Tue Jan 19 2016 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-5%{?dist}
 - remove Py2.6 deprecations in cdmiprobe and novaprobe
 * Fri Oct 6 2015 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-4%{?dist}
-- novaprobe: debugging helper leftover removed 
+- novaprobe: debugging helper leftover removed
 * Fri Oct 2 2015 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-3%{?dist}
 - novaprobe: only HTTPS endpoints allowed
 * Wed Sep 23 2015 Daniel Vrcic <dvrcic@srce.hr> - 0.1.0-2%{?dist}
