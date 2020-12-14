@@ -4,7 +4,7 @@ import sys
 
 import requests
 
-from urlparse import urlparse
+from six.moves.urllib.parse import urlparse
 
 
 strerr = ""

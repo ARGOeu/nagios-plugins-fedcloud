@@ -17,9 +17,11 @@ Requires:  python-requests
 
 %if 0%{?el7:1}
 Requires:       python-ndg_httpsclient
+Requires:       python-six
 %else
 Requires:       python2-ndg_httpsclient
 Requires:       python-argparse
+Requires:       python-six
 %endif
 
 %prep
