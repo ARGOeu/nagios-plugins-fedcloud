@@ -39,8 +39,8 @@ def main():
     # Get from AppDB the endpoint
     try:
         helpers.debug("Querying AppDB for endpoint %s" % opts.endpoint)
-        url = "/".join(opts.appdb_endpoint,
-                       "/rest/cloud/computing/endpoints")
+        url = "/".join([opts.appdb_endpoint,
+                        "rest/cloud/computing/endpoints"])
         params = {"filter": "endpointURL::eq:\"%s\"" % opts.endpoint}
         r = requests.get(url,
                          params=params,
@@ -55,13 +55,13 @@ def main():
         helpers.nagios_out("Critical", msg, 2)
 
     try:
-        url = "/".join(opts.appdb_endpoint,
-                       "rest/cloud/computing/endpoints/%s/shares" % endpoint_id)
+        url = "/".join([opts.appdb_endpoint,
+                        "rest/cloud/computing/endpoints/%s" % endpoint_id])
         r = requests.get(url,
                          params={"limit": "0", "skip": "0"},
                          headers={"accept": "application/json"})
         r.raise_for_status()
-        vos = r.json()["items"]
+        vos = r.json()["data"]["shares"]
     except requests.exceptions.RequestException as e:
         msg = "Could not get info from AppDB: %s" % e
         helpers.nagios_out("Unknown", msg, 3)
