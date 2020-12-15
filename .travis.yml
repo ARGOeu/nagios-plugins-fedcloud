@@ -9,4 +9,5 @@ install:
 script:
 - flake8 --max-line-length=88 --ignore=''
 # At least does not have syntax error
-- PYTHONPATH=$PWD:$PYTHONPATH python src/novaprobe.py --help 
+- PYTHONPATH=$PWD:$PYTHONPATH python src/novaprobe.py --help
+- PYTHONPATH=$PWD:$PYTHONPATH python src/cloudinfo.py --help
