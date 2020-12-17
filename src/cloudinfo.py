@@ -18,8 +18,27 @@ import argparse
 from datetime import datetime
 
 import requests
+from six.moves.urllib.parse import urlparse, urlunparse
 
 from nagios_plugins_fedcloud import helpers
+
+
+def get_endpoint_from_appdb(endpoint, appdb_endpoint):
+    # Get from AppDB the endpoint
+    try:
+        helpers.debug("Querying AppDB for endpoint %s" % endpoint)
+        url = "/".join([appdb_endpoint, "rest/cloud/computing/endpoints"])
+        params = {"filter": "endpointURL::eq:\"%s\"" % endpoint}
+        r = requests.get(url,
+                         params=params,
+                         headers={"accept": "application/json"})
+        r.raise_for_status()
+        return r.json()["data"][0]["id"]
+    except requests.exceptions.RequestException as e:
+        msg = "Could not get info from AppDB: %s" % e
+        helpers.nagios_out("Unknown", msg, 3)
+    except (IndexError, ValueError):
+        return None
 
 
 def main():
@@ -36,21 +55,23 @@ def main():
     if opts.verb:
         helpers.verbose = True
 
-    # Get from AppDB the endpoint
-    try:
-        helpers.debug("Querying AppDB for endpoint %s" % opts.endpoint)
-        url = "/".join([opts.appdb_endpoint,
-                        "rest/cloud/computing/endpoints"])
-        params = {"filter": "endpointURL::eq:\"%s\"" % opts.endpoint}
-        r = requests.get(url,
-                         params=params,
-                         headers={"accept": "application/json"})
-        r.raise_for_status()
-        endpoint_id = r.json()["data"][0]["id"]
-    except requests.exceptions.RequestException as e:
-        msg = "Could not get info from AppDB: %s" % e
-        helpers.nagios_out("Unknown", msg, 3)
-    except (IndexError, ValueError):
+    endpoint_id = get_endpoint_from_appdb(opts.endpoint, opts.appdb_endpoint)
+    if not endpoint_id:
+        # ARGO adds the port even if it's not originally in GOC, so try to
+        # find the endpoint without it if it's HTTPS/443
+        parsed = urlparse(opts.endpoint)
+        if parsed[0] == "https" and parsed[1].endswith(":443"):
+            helpers.debug("Retry query with no port in URL")
+            new_endpoint = urlunparse((parsed[0],
+                                       parsed[1][:-4],
+                                       parsed[2],
+                                       parsed[3],
+                                       parsed[4],
+                                       parsed[5]))
+            endpoint_id = get_endpoint_from_appdb(new_endpoint,
+                                                  opts.appdb_endpoint)
+
+    if not endpoint_id:
         msg = "Could not get info from AppDB about endpoint %s" % opts.endpoint
         helpers.nagios_out("Critical", msg, 2)
 
