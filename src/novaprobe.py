@@ -281,6 +281,9 @@ def main():
     parser.add_argument(
         "--identity-provider", dest="identity_provider", default="egi.eu", nargs="?"
     )
+    parser.add_argument(
+        "--region", dest="region", default=None, nargs="?"
+    )
 
     parser.parse_args(namespace=argholder)
     helpers.verbose = argholder.verb
@@ -321,6 +324,8 @@ def main():
         access_token = access_file.read().rstrip("\n")
         access_file.close()
 
+    region = argholder.region
+
     for auth_class in [helpers.OIDCAuth, helpers.X509V3Auth, helpers.X509V2Auth]:
         try:
             auth = auth_class(
@@ -331,7 +336,7 @@ def main():
                 userca=argholder.cert,
             )
             ks_token = auth.authenticate()
-            tenant_id, nova_url, glance_url, neutron_url = auth.get_info()
+            tenant_id, nova_url, glance_url, neutron_url = auth.get_info(region)
             helpers.debug("Authenticated with %s" % auth_class.name)
             break
         except helpers.AuthenticationException:
@@ -340,7 +345,9 @@ def main():
     else:
         helpers.nagios_out("Critical", "Unable to authenticate against Keystone", 2)
 
-    helpers.debug("Endpoint: %s" % (argholder.endpoint))
+    helpers.debug("Endpoint: %s" % argholder.endpoint)
+    if region:
+        helpers.debug("Region: %s" % region)
     helpers.debug("Auth token (cut to 64 chars): %.64s" % ks_token)
     helpers.debug("Project OPS, ID: %s" % tenant_id)
     helpers.debug("Nova: %s" % nova_url)
