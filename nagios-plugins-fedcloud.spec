@@ -4,7 +4,7 @@
 
 Summary:   Nagios plugins for EGI FedCloud services
 Name:      nagios-plugins-fedcloud
-Version:   0.6.0
+Version:   0.6.1
 Release:   1%{?dist}
 License:   ASL 2.0
 Group:     Network/Monitoring
@@ -49,6 +49,8 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
+* Wed Jun 15 2021 Katarina Zailac <kzailac@srce.hr> - 0.6.1-1%{?dist}
+- Add region support to novaprobe
 * Wed Jan 13 2021 Katarina Zailac <kzailac@srce.hr> - 0.6.0-1%{?dist}
 - New probe for cloud info provider
 * Wed Apr 8 2020 Katarina Zailac <kzailac@srce.hr> - 0.5.2-1%{?dist}

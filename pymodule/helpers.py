@@ -67,10 +67,10 @@ class BaseAuth(object):
         tenant = self.get_ops_tenant(unscoped_token)
         return self.get_scoped_token(unscoped_token, tenant)
 
-    def get_info(self):
+    def get_info(self, region=None):
         raise NotImplementedError
 
-    def get_swift_endpoint(self):
+    def get_swift_endpoint(self, region=None):
         raise NotImplementedError
 
 
@@ -144,7 +144,7 @@ class BaseV3Auth(BaseAuth):
                 "Connection error %s - %s" % (url, errmsg_from_excp(e))
             )
 
-    def get_info(self):
+    def get_info(self, region=None):
         try:
             tenant_id = self.token_response.json()["token"]["project"]["id"]
         except (KeyError, IndexError) as e:
@@ -162,6 +162,9 @@ class BaseV3Auth(BaseAuth):
             for e in service_catalog:
                 if e["type"] in r:
                     for ep in e["endpoints"]:
+                        # pick the right region
+                        if region and ep["region"] != region:
+                            continue
                         if ep["interface"] == "public":
                             r[e["type"]] = ep["url"]
             assert r["compute"] and r["image"]
@@ -171,7 +174,7 @@ class BaseV3Auth(BaseAuth):
             )
         return tenant_id, r["compute"], r["image"], r["network"]
 
-    def get_swift_endpoint(self):
+    def get_swift_endpoint(self, region=None):
         try:
             tenant_id = self.token_response.json()["token"]["project"]["id"]
 
@@ -191,6 +194,9 @@ class BaseV3Auth(BaseAuth):
             for e in service_catalog:
                 if e["type"] == "object-store":
                     for ep in e["endpoints"]:
+                        # pick the right region
+                        if region and ep["region"] != region:
+                            continue
                         if ep["interface"] == "public":
                             swift_endpoint = ep["url"]
 
@@ -413,7 +419,7 @@ class X509V2Auth(BaseAuth):
                 "Connection error %s - %s" % (url, errmsg_from_excp(e))
             )
 
-    def get_info(self):
+    def get_info(self, region=None):
         try:
             tenant_id = self.token_response.json()["access"]["token"]["tenant"]["id"]
         except (KeyError, IndexError) as e:
@@ -439,7 +445,7 @@ class X509V2Auth(BaseAuth):
 
         return tenant_id, r["compute"], r["image"], r["network"]
 
-    def get_swift_endpoint(self):
+    def get_swift_endpoint(self, region=None):
         try:
             tenant_id = \
                 self.token_response.json()["access"]["token"]["tenant"]["id"]
