@@ -16,8 +16,8 @@
 
 # Variables
 CURL=/usr/bin/curl
-CERT_PATH=/etc/nagios/globus/robocert.pem
-KEY_PATH=/etc/nagios/globus/robokey.pem
+CERT_PATH=/etc/nagios/globus/robotcert.pem
+KEY_PATH=/etc/nagios/globus/robotkey.pem
 
 if [ "x$1" != "x" ]; then
   PERUN_URL_BASE=$1
