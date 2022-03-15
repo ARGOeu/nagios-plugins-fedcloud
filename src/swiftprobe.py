@@ -167,6 +167,8 @@ def main():
         "--access-token", dest="access_token", type=str, help="Access token"
     )
     parser.add_argument(
+        "--access-token-2", dest="access_token_2", type=str, help="Second access token")
+    parser.add_argument(
         "-t", "--timeout", dest="timeout", type=int, default=120,
         help="The max timeout (in sec) before exiting. Default is '120'."
     )
@@ -216,29 +218,38 @@ def main():
 
     ks_token = None
     access_token = None
+    access_token_2 = None
     if args.access_token:
         access_file = open(args.access_token, 'r')
         access_token = access_file.read().rstrip('\n')
         access_file.close()
 
+    if argholder.access_token_2:
+        access_file = open(argholder.access_token_2, "r")
+        access_token_2 = access_file.read().rstrip("\n")
+        access_file.close()
+
     for auth_class in [
         helpers.OIDCAuth, helpers.X509V3Auth, helpers.X509V2Auth
     ]:
-        try:
-            auth = auth_class(
-                args.endpoint,
-                args.timeout,
-                access_token=access_token,
-                identity_provider=args.identity_provider,
-                userca=args.cert
-            )
-            ks_token = auth.authenticate()
-            tenant_id, swift_endpoint = auth.get_swift_endpoint()
-            helpers.debug("Authenticated with %s" % auth_class.name)
-            break
+        # this is meant to support several issues while Check-in is transitioning from
+        # MitreID to Keycloack
+        for token in [argholder.access_token, argholder.access_token_2]:
+            try:
+                auth = auth_class(
+                    args.endpoint,
+                    args.timeout,
+                    access_token=access_token,
+                    identity_provider=args.identity_provider,
+                    userca=args.cert
+                )
+                ks_token = auth.authenticate()
+                tenant_id, swift_endpoint = auth.get_swift_endpoint()
+                helpers.debug("Authenticated with %s" % auth_class.name)
+                break
 
-        except helpers.AuthenticationException:
-            helpers.debug("Authentication with %s failed" % auth_class.name)
+            except helpers.AuthenticationException:
+                helpers.debug("Authentication with %s failed" % auth_class.name)
 
     else:
         helpers.nagios_out(

@@ -273,6 +273,7 @@ def main():
     parser.add_argument("--image", dest="image", nargs="?")
     parser.add_argument("--cert", dest="cert", nargs="?")
     parser.add_argument("--access-token", dest="access_token", nargs="?")
+    parser.add_argument("--access-token-2", dest="access_token_2", nargs="?")
     parser.add_argument("-t", dest="timeout", type=int, nargs="?", default=120)
     parser.add_argument(
         "--vm-timeout", dest="vm_timeout", type=int, nargs="?", default=300
@@ -319,29 +320,38 @@ def main():
 
     ks_token = None
     access_token = None
+    access_token_2 = None
     if argholder.access_token:
         access_file = open(argholder.access_token, "r")
         access_token = access_file.read().rstrip("\n")
         access_file.close()
 
+    if argholder.access_token_2:
+        access_file = open(argholder.access_token_2, "r")
+        access_token_2 = access_file.read().rstrip("\n")
+        access_file.close()
+
     region = argholder.region
 
     for auth_class in [helpers.OIDCAuth, helpers.X509V3Auth, helpers.X509V2Auth]:
-        try:
-            auth = auth_class(
-                argholder.endpoint,
-                argholder.timeout,
-                access_token=access_token,
-                identity_provider=argholder.identity_provider,
-                userca=argholder.cert,
-            )
-            ks_token = auth.authenticate()
-            tenant_id, nova_url, glance_url, neutron_url = auth.get_info(region)
-            helpers.debug("Authenticated with %s" % auth_class.name)
-            break
-        except helpers.AuthenticationException:
-            # just go ahead
-            helpers.debug("Authentication with %s failed" % auth_class.name)
+        # this is meant to support several issues while Check-in is transitioning from
+        # MitreID to Keycloack
+        for token in [argholder.access_token, argholder.access_token_2]:
+            try:
+                auth = auth_class(
+                    argholder.endpoint,
+                    argholder.timeout,
+                    access_token=token,
+                    identity_provider=argholder.identity_provider,
+                    userca=argholder.cert,
+                )
+                ks_token = auth.authenticate()
+                tenant_id, nova_url, glance_url, neutron_url = auth.get_info(region)
+                helpers.debug("Authenticated with %s" % auth_class.name)
+                break
+            except helpers.AuthenticationException:
+                # just go ahead
+                helpers.debug("Authentication with %s failed" % auth_class.name)
     else:
         helpers.nagios_out("Critical", "Unable to authenticate against Keystone", 2)
 
