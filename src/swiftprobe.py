@@ -234,22 +234,27 @@ def main():
     ]:
         # this is meant to support several issues while Check-in is transitioning from
         # MitreID to Keycloack
-        for token in [args.access_token, args.access_token_2]:
+        authenticated = False
+        for token in [access_token, access_token_2]:
             try:
                 auth = auth_class(
                     args.endpoint,
                     args.timeout,
-                    access_token=access_token,
+                    access_token=token,
                     identity_provider=args.identity_provider,
                     userca=args.cert
                 )
                 ks_token = auth.authenticate()
                 tenant_id, swift_endpoint = auth.get_swift_endpoint()
                 helpers.debug("Authenticated with %s" % auth_class.name)
+                authenticated = True
                 break
 
             except helpers.AuthenticationException:
                 helpers.debug("Authentication with %s failed" % auth_class.name)
+
+        if authenticated:
+            break
 
     else:
         helpers.nagios_out(
