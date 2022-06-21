@@ -224,8 +224,8 @@ def main():
         access_token = access_file.read().rstrip('\n')
         access_file.close()
 
-    if argholder.access_token_2:
-        access_file = open(argholder.access_token_2, "r")
+    if args.access_token_2:
+        access_file = open(args.access_token_2, "r")
         access_token_2 = access_file.read().rstrip("\n")
         access_file.close()
 
@@ -234,7 +234,7 @@ def main():
     ]:
         # this is meant to support several issues while Check-in is transitioning from
         # MitreID to Keycloack
-        for token in [argholder.access_token, argholder.access_token_2]:
+        for token in [args.access_token, args.access_token_2]:
             try:
                 auth = auth_class(
                     args.endpoint,
