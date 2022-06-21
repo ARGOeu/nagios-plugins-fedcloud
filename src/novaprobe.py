@@ -336,7 +336,8 @@ def main():
     for auth_class in [helpers.OIDCAuth, helpers.X509V3Auth, helpers.X509V2Auth]:
         # this is meant to support several issues while Check-in is transitioning from
         # MitreID to Keycloack
-        for token in [argholder.access_token, argholder.access_token_2]:
+        authenticated = False
+        for token in [access_token, access_token_2]:
             try:
                 auth = auth_class(
                     argholder.endpoint,
@@ -348,10 +349,15 @@ def main():
                 ks_token = auth.authenticate()
                 tenant_id, nova_url, glance_url, neutron_url = auth.get_info(region)
                 helpers.debug("Authenticated with %s" % auth_class.name)
+                authenticated = True
                 break
             except helpers.AuthenticationException:
                 # just go ahead
                 helpers.debug("Authentication with %s failed" % auth_class.name)
+
+        if authenticated:
+            break
+
     else:
         helpers.nagios_out("Critical", "Unable to authenticate against Keystone", 2)
 
