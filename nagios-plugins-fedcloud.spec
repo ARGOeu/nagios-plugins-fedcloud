@@ -4,7 +4,7 @@
 
 Summary:   Nagios plugins for EGI FedCloud services
 Name:      nagios-plugins-fedcloud
-Version:   0.6.2
+Version:   0.6.3
 Release:   1%{?dist}
 License:   ASL 2.0
 Group:     Network/Monitoring
@@ -49,6 +49,8 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
+* Fri Jun 24 2022 Katarina Zailac <kzailac@srce.hr> - 0.6.3-1%{?dist}
+- Add second token argument to novaprobe and swiftprobe
 * Wed Jun 16 2021 Emir Imamagic <eimamagi@srce.hr> - 0.6.2-1%{?dist}
 - Fix robot cert path in check_perun
 * Tue Jun 15 2021 Katarina Zailac <kzailac@srce.hr> - 0.6.1-1%{?dist}
