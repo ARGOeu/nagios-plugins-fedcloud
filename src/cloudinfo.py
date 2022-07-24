@@ -47,7 +47,7 @@ def main():
     parser.add_argument("-v", dest="verb", action="store_true")
     parser.add_argument("-t", dest="timeout", type=int, default=120)
     parser.add_argument("--appdb-endpoint",
-                        default="http://is.marie.hellasgrid.gr")
+                        default="https://is.appdb.egi.eu")
     parser.add_argument("--warning-treshold", type=int, default=1)
     parser.add_argument("--critical-treshold", type=int, default=5)
     opts = parser.parse_args()
